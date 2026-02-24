@@ -1,5 +1,6 @@
 import {tiny, defs} from './examples/common.js';
-import {get_wall_positions, MAZE_COLS, MAZE_ROWS, WALL_HEIGHT, FLOOR_MARGIN} from './pacman-map.js';
+import {get_wall_positions, get_pellet_positions, get_power_pellet_positions, MAZE_COLS, MAZE_ROWS, WALL_HEIGHT, FLOOR_MARGIN} from './pacman-map.js';
+import {Pellet, PowerPellet, create_pellet_assets} from './pacman-pellets.js';
 
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
 
@@ -14,6 +15,10 @@ export class Pacman extends Component
       floor: { shader: phong, ambient: 0.5, diffusivity: 0.8, specularity: 0, color: color(0, 0, 0, 1) }
     };
     this.wall_positions = get_wall_positions();
+
+    this.pellet_assets = create_pellet_assets();
+    this.pellets = get_pellet_positions().map(([x, z]) => new Pellet(x, z));
+    this.power_pellets = get_power_pellet_positions().map(([x, z]) => new PowerPellet(x, z));
   }
 
   render_controls()
@@ -43,5 +48,8 @@ export class Pacman extends Component
       const wall_transform = Mat4.translation(x, WALL_HEIGHT / 2, z).times(Mat4.scale(0.5, WALL_HEIGHT / 2, 0.5));
       this.shapes.wall.draw(caller, this.uniforms, wall_transform, this.materials.wall);
     }
+
+    for (const pellet of this.pellets) pellet.draw(caller, this.uniforms, this.pellet_assets);
+    for (const pellet of this.power_pellets) pellet.draw(caller, this.uniforms, this.pellet_assets);
   }
 }
