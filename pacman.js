@@ -1,4 +1,5 @@
 import {tiny, defs} from './examples/common.js';
+import {get_wall_positions, MAZE_COLS, MAZE_ROWS, WALL_HEIGHT, FLOOR_MARGIN} from './pacman-map.js';
 
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
 
@@ -6,8 +7,13 @@ export class Pacman extends Component
 {
   init()
   {
-    this.shapes = {};
-    this.materials = {};
+    this.shapes = { wall: new defs.Cube(), floor: new defs.Cube() };
+    const phong = new defs.Phong_Shader();
+    this.materials = {
+      wall: { shader: phong, ambient: 0.3, diffusivity: 1, specularity: 0.3, color: color(0.2, 0.3, 1, 1) },
+      floor: { shader: phong, ambient: 0.5, diffusivity: 0.8, specularity: 0, color: color(0, 0, 0, 1) }
+    };
+    this.wall_positions = get_wall_positions();
   }
 
   render_controls()
@@ -19,14 +25,23 @@ export class Pacman extends Component
 
   render_animation(caller)
   {
-    // All placeholder default
     if (!caller.controls)
     {
       this.animated_children.push(caller.controls = new defs.Movement_Controls({ uniforms: this.uniforms }));
       caller.controls.add_mouse_controls(caller.canvas);
-      Shader.assign_camera(Mat4.translation(0, 0, -10), this.uniforms);
+      Shader.assign_camera(Mat4.look_at(vec3(0, 50, 0), vec3(0, 0, 0), vec3(0, 0, -1)), this.uniforms);
     }
-    this.uniforms.projection_transform = Mat4.perspective(Math.PI / 4, caller.width / caller.height, 1, 100);
-    this.uniforms.lights = [defs.Phong_Shader.light_source(vec4(0, 0, 1, 0), color(1, 1, 1, 1), 100000)];
+    this.uniforms.projection_transform = Mat4.perspective(Math.PI / 4, caller.width / caller.height, 1, 200);
+    this.uniforms.lights = [defs.Phong_Shader.light_source(vec4(0, 1, 1, 0), color(1, 1, 1, 1), 100000)];
+
+    const half_x = MAZE_COLS / 2 + FLOOR_MARGIN;
+    const half_z = MAZE_ROWS / 2 + FLOOR_MARGIN;
+    const floor_transform = Mat4.translation(0, -0.5, 0).times(Mat4.scale(half_x, 0.5, half_z));
+    this.shapes.floor.draw(caller, this.uniforms, floor_transform, this.materials.floor);
+
+    for (const [x, z] of this.wall_positions) {
+      const wall_transform = Mat4.translation(x, WALL_HEIGHT / 2, z).times(Mat4.scale(0.5, WALL_HEIGHT / 2, 0.5));
+      this.shapes.wall.draw(caller, this.uniforms, wall_transform, this.materials.wall);
+    }
   }
 }
