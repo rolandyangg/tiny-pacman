@@ -68,34 +68,42 @@ export class PacmanPlayer {
      *   - direction buffering / turning at tile centres
      *   - stopping cleanly when the next tile is a wall
      *   - continuous movement otherwise
+     *
+     * Key design: we only snap to the tile centre (and re-evaluate direction)
+     * when the player is TURNING or hitting a wall. When continuing straight we
+     * let the position run freely so the snap never fights the movement.
      */
     update(dt) {
         const [col, row]         = world_to_tile(this.x, this.z);
         const [tile_cx, tile_cz] = tile_center(col, row);
 
-        // "Near centre" threshold — small enough that the player must
-        // actually reach the centre before turning, but not so tight that
-        // they miss it at normal speed.
-        const SNAP = 0.15;
+        // A generous threshold so we don't miss the window at full speed.
+        // Only used for turns and wall-stops, NOT for straight-through motion.
+        const SNAP = 0.25;
         const near_center =
             Math.abs(this.x - tile_cx) < SNAP &&
             Math.abs(this.z - tile_cz) < SNAP;
 
         if (near_center) {
-            // Try to commit the buffered direction
-            if (this.next_dir_x !== 0 || this.next_dir_z !== 0) {
+            // ── Try to turn if the buffered direction differs from current ────
+            const want_turn =
+                this.next_dir_x !== this.dir_x ||
+                this.next_dir_z !== this.dir_z;
+
+            if (want_turn && (this.next_dir_x !== 0 || this.next_dir_z !== 0)) {
                 const nc = col + this.next_dir_x;
                 const nr = row + this.next_dir_z;
                 if (!is_wall(nc, nr)) {
+                    // Commit the turn — snap so the new axis starts clean
                     this.dir_x = this.next_dir_x;
                     this.dir_z = this.next_dir_z;
-                    // Snap exactly to centre so we don't drift off the grid
-                    this.x = tile_cx;
-                    this.z = tile_cz;
+                    this.x    = tile_cx;
+                    this.z    = tile_cz;
                 }
             }
 
-            // Stop if the tile ahead in the current direction is a wall
+            // ── Stop if the tile ahead (in current direction) is a wall ──────
+            // Only stop; don't snap when going straight through an open tile.
             if (this.dir_x !== 0 || this.dir_z !== 0) {
                 const nc = col + this.dir_x;
                 const nr = row + this.dir_z;
@@ -108,7 +116,7 @@ export class PacmanPlayer {
             }
         }
 
-        // Move
+        // Move — unthrottled when going straight so no oscillation occurs
         this.x += this.dir_x * PLAYER_SPEED * dt;
         this.z += this.dir_z * PLAYER_SPEED * dt;
     }
