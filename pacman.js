@@ -88,17 +88,23 @@ export class Pacman extends Component
     render_animation(caller)
     {
         // ── One-time camera setup ─────────────────────────────────────────────
-        if (!caller.controls)
-        {
-            this.animated_children.push(
-                caller.controls = new defs.Movement_Controls({ uniforms: this.uniforms })
-            );
-            caller.controls.add_mouse_controls(caller.canvas);
-            Shader.assign_camera(
-                Mat4.look_at(vec3(0, 50, 0), vec3(0, 0, 0), vec3(0, 0, -1)),
-                this.uniforms
-            );
-        }
+        // if (!caller.controls)
+        // {
+        //     this.animated_children.push(
+        //         caller.controls = new defs.Movement_Controls({ uniforms: this.uniforms }) // Adds WASD Controls to move around
+        //     );
+        //     caller.controls.add_mouse_controls(caller.canvas); // Adds camera controls to move around
+        //     Shader.assign_camera(
+        //         Mat4.look_at(vec3(0, 50, 0), vec3(0, 0, 0), vec3(0, 0, -1)),
+        //         this.uniforms
+        //     );
+        // }
+
+        // Make camera point down on the map
+        Shader.assign_camera(
+            Mat4.look_at(vec3(0, 50, 0), vec3(0, 0, 0), vec3(0, 0, -1)),
+            this.uniforms
+        );
 
         this.uniforms.projection_transform =
             Mat4.perspective(Math.PI / 4, caller.width / caller.height, 1, 200);
