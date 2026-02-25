@@ -8,7 +8,7 @@
  * 28 cols × 31 rows
  * symmetric; tunnels at left/right center; ghost house in middle (as open space region)
  */
-const MAZE_GRID = [
+export const MAZE_GRID = [
   "1111111111111111111111111111",
   "1............11............1",
   "1.1111.11111.11.11111.1111.1",
