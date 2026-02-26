@@ -50,6 +50,10 @@ export class PacmanPlayer {
         this.dir_x = 0;
         this.dir_z = 0;
 
+        // last known facing direction (for first person camera)
+        this.last_dir_x = 0;
+        this.last_dir_z = -1;
+
         // Buffered next direction — applied the next time the player is
         // close to a tile centre, mimicking classic Pac-Man controls.
         this.next_dir_x = 0;
@@ -114,6 +118,12 @@ export class PacmanPlayer {
                     this.z    = tile_cz;
                 }
             }
+        }
+
+        // use last dir when movement restarts
+        if (this.dir_x !== 0 || this.dir_z !== 0) {
+            this.last_dir_x = this.dir_x;
+            this.last_dir_z = this.dir_z;
         }
 
         // Move — unthrottled when going straight so no oscillation occurs
