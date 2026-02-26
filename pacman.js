@@ -69,6 +69,7 @@ export class Pacman extends Component
         this.cam_look_z = -1;
         this.cam_third_x = 0;
         this.cam_third_z = 0;
+        this.third_follow_dist = 3.5;
     }
 
     // ── Controls / key bindings ───────────────────────────────────────────────
@@ -94,17 +95,26 @@ export class Pacman extends Component
         this.new_line();
 
         // Camera control
-        this.key_triggered_button("Toggle Camera", ["t"], () => {
-            if (this.camera_mode === 'top_down')      this.camera_mode = 'first_person';
-            else if (this.camera_mode === 'first_person') this.camera_mode = 'third_person';
-            else                                          this.camera_mode = 'top_down';
+        this.key_triggered_button("Top-Down Camera", ["1"], () => {
+            this.camera_mode = 'top_down';
         });
+        this.key_triggered_button("Third-Person Camera", ["2"], () => {
+            this.camera_mode = 'third_person';
+        });
+        this.key_triggered_button("First-Person Camera", ["3"], () => {
+            this.camera_mode = 'first_person';
+        });
+        this.new_line();
+
+        // Zoom options
+        this.key_triggered_button("Zoom In",  ["z"], () => this.third_follow_dist = Math.max(1.5, this.third_follow_dist - 0.5));
+        this.key_triggered_button("Zoom Out", ["x"], () => this.third_follow_dist = Math.min(8.0, this.third_follow_dist + 0.5));
         this.new_line();
 
         // WASD movement
         this.key_triggered_button("← / Turn Left",  ["a"], () => {
-            if (this.camera_mode === 'first_person') {
-                // 90° CCW of current facing: (fz, -fx)
+            if (this.camera_mode === 'first_person' || this.camera_mode === 'third_person') {
+                // 90 CCW of current facing
                 this.player.set_direction(
                     this.player.last_dir_z,
                     -this.player.last_dir_x
@@ -114,8 +124,8 @@ export class Pacman extends Component
             }
         });
         this.key_triggered_button("→ / Turn Right", ["d"], () => {
-            if (this.camera_mode === 'first_person') {
-                // 90° CW of current facing: (-fz, fx)
+            if (this.camera_mode === 'first_person' || this.camera_mode === 'third_person') {
+                // 90 CW of current facing
                 this.player.set_direction(
                     -this.player.last_dir_z,
                     this.player.last_dir_x
@@ -125,7 +135,7 @@ export class Pacman extends Component
             }
         });
         this.key_triggered_button("↑ / Forward",    ["w"], () => {
-            if (this.camera_mode === 'first_person') {
+            if (this.camera_mode === 'first_person' || this.camera_mode === 'third_person') {
                 this.player.set_direction(
                     this.player.last_dir_x,
                     this.player.last_dir_z
@@ -135,7 +145,7 @@ export class Pacman extends Component
             }
         });
         this.key_triggered_button("↓ / Backward",   ["s"], () => {
-            if (this.camera_mode === 'first_person') {
+            if (this.camera_mode === 'first_person' || this.camera_mode === 'third_person') {
                 this.player.set_direction(
                     -this.player.last_dir_x,
                     -this.player.last_dir_z
@@ -199,6 +209,31 @@ export class Pacman extends Component
             Shader.assign_camera(Mat4.look_at(eye, at, vec3(0, 1, 0)), this.uniforms);
             this.uniforms.projection_transform =
                 Mat4.perspective(FOV, caller.width / caller.height, 0.6, 200);
+        } else if (this.camera_mode === 'third_person') {
+            // third person camera consts
+            const SMOOTHING  = 6.0;
+            const CAM_HEIGHT  = 2.5;
+            const LOOK_HEIGHT = 0.35;
+            const FOV = Math.PI / 4;
+
+            // Reuse same lerp on look direction
+            this.cam_look_x += (this.player.last_dir_x - this.cam_look_x) * SMOOTHING * dt;
+            this.cam_look_z += (this.player.last_dir_z - this.cam_look_z) * SMOOTHING * dt;
+
+            // Target eye position: behind and above player
+            const target_cam_x = this.player.x - this.cam_look_x * this.third_follow_dist;
+            const target_cam_z = this.player.z - this.cam_look_z * this.third_follow_dist;
+
+            // Smooth the camera position itself so it doesn't rubber-band
+            this.cam_third_x += (target_cam_x - this.cam_third_x) * SMOOTHING * dt;
+            this.cam_third_z += (target_cam_z - this.cam_third_z) * SMOOTHING * dt;
+
+            const eye = vec3(this.cam_third_x, CAM_HEIGHT, this.cam_third_z);
+            const at  = vec3(this.player.x, LOOK_HEIGHT, this.player.z);
+
+            Shader.assign_camera(Mat4.look_at(eye, at, vec3(0, 1, 0)), this.uniforms);
+            this.uniforms.projection_transform =
+                Mat4.perspective(FOV, caller.width / caller.height, 0.1, 200);
         } else {
             Shader.assign_camera(
                 Mat4.look_at(vec3(0, 50, 0), vec3(0, 0, 0), vec3(0, 0, -1)),
