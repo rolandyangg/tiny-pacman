@@ -48,10 +48,23 @@ export const CELL_SIZE = 2;
 export const WALL_HEIGHT = 1;
 export const PELLET_Y = 0.15;
 
-function tile_center_world(col, row) {
+/** Return world-space [x, z] center of tile (col, row). */
+export function get_tile_center_world(col, row) {
   const x = col - (MAZE_COLS / 2) + 0.5;
   const z = row - (MAZE_ROWS / 2) + 0.5;
   return [x, z];
+}
+
+function tile_center_world(col, row) {
+  return get_tile_center_world(col, row);
+}
+
+/** Return true if (col, row) is a walkable path tile (not wall, in bounds). Uses same line normalization as get_wall_positions. */
+export function is_walkable(col, row) {
+  if (row < 0 || row >= MAZE_ROWS || col < 0 || col >= MAZE_COLS) return false;
+  const raw = MAZE_GRID[row] ?? "";
+  const line = raw.slice(0, MAZE_COLS).padEnd(MAZE_COLS, "1");
+  return line[col] !== "1";
 }
 
 /**

@@ -3,6 +3,7 @@ import {get_wall_positions, get_pellet_positions, get_power_pellet_positions,
         MAZE_COLS, MAZE_ROWS, WALL_HEIGHT, FLOOR_MARGIN} from './pacman-map.js';
 import {Pellet, PowerPellet, create_pellet_assets} from './pacman-pellets.js';
 import {PacmanPlayer} from './pacman-player.js';
+import {Ghost} from './pacman-ghosts.js';
 
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
 
@@ -12,7 +13,10 @@ const START_Z = 23 - MAZE_ROWS / 2 + 0.5;   // ≈  8.0
 
 const PELLET_POINTS       = 10;
 const POWER_PELLET_POINTS = 50;
+const GHOST_EAT_POINTS    = 200;
+const FRIGHTENED_DURATION = 8;   // seconds after eating power pellet
 const COLLECT_RADIUS      = 0.6;   // world-units; pellet eaten when player centre is within this
+const GHOST_COLLIDE_RADIUS = 0.55; // player + ghost touch (sum of radii ~0.67, slightly generous)
 
 export class Pacman extends Component
 {
@@ -23,6 +27,7 @@ export class Pacman extends Component
             wall:   new defs.Cube(),
             floor:  new defs.Cube(),
             player: new defs.Subdivision_Sphere(3),
+            ghost:  new defs.Subdivision_Sphere(3),
         };
 
         // ── Materials ─────────────────────────────────────────────────────────
@@ -34,6 +39,10 @@ export class Pacman extends Component
                       color: color(0, 0, 0, 1) },
             player: { shader: phong, ambient: 0.6, diffusivity: 0.8, specularity: 0.4,
                       color: color(1, 1, 0, 1) },
+            ghost:  { shader: phong, ambient: 0.6, diffusivity: 0.8, specularity: 0.3,
+                      color: color(1, 0, 0, 1) },
+            ghost_frightened: { shader: phong, ambient: 0.6, diffusivity: 0.8, specularity: 0.2,
+                      color: color(0.2, 0.2, 1, 1) },
         };
 
         this._reset();
@@ -48,6 +57,8 @@ export class Pacman extends Component
         this.power_pellets  = get_power_pellet_positions().map(([x, z]) => new PowerPellet(x, z));
 
         this.player  = new PacmanPlayer(START_X, START_Z);
+        this.ghosts  = [new Ghost(0), new Ghost(1), new Ghost(2), new Ghost(3)];
+        this.frightened_timer = 0;
         this.score   = 0;
         this.lives   = 3;
         this.game_won  = false;
@@ -144,6 +155,36 @@ export class Pacman extends Component
                     if (Math.sqrt(dx * dx + dz * dz) < COLLECT_RADIUS) {
                         pellet.eat();
                         this.score += POWER_PELLET_POINTS;
+                        this.frightened_timer = FRIGHTENED_DURATION;
+                    }
+                }
+            }
+
+            // Frightened timer (ghosts flee / can be eaten)
+            if (this.frightened_timer > 0) {
+                this.frightened_timer = Math.max(0, this.frightened_timer - dt);
+            }
+
+            // Ghost AI: chase, scatter, or flee
+            const is_frightened = this.frightened_timer > 0;
+            for (const ghost of this.ghosts) {
+                ghost.update(dt, this.player.x, this.player.z, is_frightened, t);
+            }
+
+            // Ghost–player collision
+            for (const ghost of this.ghosts) {
+                const dx = this.player.x - ghost.x;
+                const dz = this.player.z - ghost.z;
+                if (Math.sqrt(dx * dx + dz * dz) < GHOST_COLLIDE_RADIUS) {
+                    if (is_frightened) {
+                        ghost.respawn();
+                        this.score += GHOST_EAT_POINTS;
+                    } else {
+                        this.lives--;
+                        this.player = new PacmanPlayer(START_X, START_Z);
+                        for (const g of this.ghosts) g.respawn();
+                        if (this.lives <= 0) this.game_over = true;
+                        break;
                     }
                 }
             }
@@ -179,5 +220,14 @@ export class Pacman extends Component
             this.player.get_transform(),
             this.materials.player
         );
+
+        // ── Draw ghosts ────────────────────────────────────────────────────────
+        const is_frightened = this.frightened_timer > 0;
+        for (const ghost of this.ghosts) {
+            const mat = ghost.is_frightened(is_frightened)
+                ? this.materials.ghost_frightened
+                : { ...this.materials.ghost, color: color(...ghost.color) };
+            this.shapes.ghost.draw(caller, this.uniforms, ghost.get_transform(), mat);
+        }
     }
 }
