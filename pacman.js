@@ -64,6 +64,11 @@ export class Pacman extends Component
         this.game_won  = false;
         this.game_over = false;
         this.last_t    = undefined;
+        this.camera_mode = 'top_down';
+        this.cam_look_x = 0;
+        this.cam_look_z = -1;
+        this.cam_third_x = 0;
+        this.cam_third_z = 0;
     }
 
     // ── Controls / key bindings ───────────────────────────────────────────────
@@ -88,11 +93,57 @@ export class Pacman extends Component
         this.key_triggered_button("Reset",     ["Alt", "r"], () => this._reset());
         this.new_line();
 
+        // Camera control
+        this.key_triggered_button("Toggle Camera", ["t"], () => {
+            if (this.camera_mode === 'top_down')      this.camera_mode = 'first_person';
+            else if (this.camera_mode === 'first_person') this.camera_mode = 'third_person';
+            else                                          this.camera_mode = 'top_down';
+        });
+        this.new_line();
+
         // WASD movement
-        this.key_triggered_button("← Left",  ["a"], () => this.player.set_direction(-1,  0));
-        this.key_triggered_button("→ Right",  ["d"], () => this.player.set_direction( 1,  0));
-        this.key_triggered_button("↑ Up",     ["w"], () => this.player.set_direction( 0, -1));
-        this.key_triggered_button("↓ Down",   ["s"], () => this.player.set_direction( 0,  1));
+        this.key_triggered_button("← / Turn Left",  ["a"], () => {
+            if (this.camera_mode === 'first_person') {
+                // 90° CCW of current facing: (fz, -fx)
+                this.player.set_direction(
+                    this.player.last_dir_z,
+                    -this.player.last_dir_x
+                );
+            } else {
+                this.player.set_direction(-1, 0);
+            }
+        });
+        this.key_triggered_button("→ / Turn Right", ["d"], () => {
+            if (this.camera_mode === 'first_person') {
+                // 90° CW of current facing: (-fz, fx)
+                this.player.set_direction(
+                    -this.player.last_dir_z,
+                    this.player.last_dir_x
+                );
+            } else {
+                this.player.set_direction(1, 0);
+            }
+        });
+        this.key_triggered_button("↑ / Forward",    ["w"], () => {
+            if (this.camera_mode === 'first_person') {
+                this.player.set_direction(
+                    this.player.last_dir_x,
+                    this.player.last_dir_z
+                );
+            } else {
+                this.player.set_direction(0, -1);
+            }
+        });
+        this.key_triggered_button("↓ / Backward",   ["s"], () => {
+            if (this.camera_mode === 'first_person') {
+                this.player.set_direction(
+                    -this.player.last_dir_x,
+                    -this.player.last_dir_z
+                );
+            } else {
+                this.player.set_direction(0, 1);
+            }
+        });
     }
 
     // ── Main render / game loop ───────────────────────────────────────────────
@@ -111,14 +162,6 @@ export class Pacman extends Component
         //     );
         // }
 
-        // Make camera point down on the map
-        Shader.assign_camera(
-            Mat4.look_at(vec3(0, 50, 0), vec3(0, 0, 0), vec3(0, 0, -1)),
-            this.uniforms
-        );
-
-        this.uniforms.projection_transform =
-            Mat4.perspective(Math.PI / 4, caller.width / caller.height, 1, 200);
         this.uniforms.lights = [
             defs.Phong_Shader.light_source(vec4(0, 1, 1, 0), color(1, 1, 1, 1), 100000)
         ];
@@ -128,6 +171,42 @@ export class Pacman extends Component
         if (this.last_t === undefined) this.last_t = t;
         const dt = Math.min(t - this.last_t, 0.05);
         this.last_t = t;
+
+        // ── Camera logic ────────────────────────────────────────────────────────
+        // First person camera
+        if (this.camera_mode === 'first_person') {
+            // first person camera constants
+            const SMOOTHING = 8.0;
+            const EYE_HEIGHT = 0.55;
+            const FOV = Math.PI / 6;
+            const PULL_BACK = 0.2;
+
+            // LERP the stored look direction toward the players last facing
+            this.cam_look_x += (this.player.last_dir_x - this.cam_look_x) * SMOOTHING * dt;
+            this.cam_look_z += (this.player.last_dir_z - this.cam_look_z) * SMOOTHING * dt;
+
+            const eye = vec3(
+                this.player.x - this.cam_look_x * PULL_BACK,
+                EYE_HEIGHT,
+                this.player.z - this.cam_look_z * PULL_BACK
+            );
+            const at = vec3(
+                this.player.x + this.cam_look_x,
+                EYE_HEIGHT,
+                this.player.z + this.cam_look_z
+            );
+
+            Shader.assign_camera(Mat4.look_at(eye, at, vec3(0, 1, 0)), this.uniforms);
+            this.uniforms.projection_transform =
+                Mat4.perspective(FOV, caller.width / caller.height, 0.6, 200);
+        } else {
+            Shader.assign_camera(
+                Mat4.look_at(vec3(0, 50, 0), vec3(0, 0, 0), vec3(0, 0, -1)),
+                this.uniforms
+            );
+            this.uniforms.projection_transform =
+                Mat4.perspective(Math.PI / 4, caller.width / caller.height, 1, 200);
+        }
 
         // ── Game logic (skip when paused or game is over) ─────────────────────
         if (this.uniforms.animate && !this.game_won && !this.game_over)
@@ -215,11 +294,13 @@ export class Pacman extends Component
         for (const pellet of this.power_pellets) pellet.draw(caller, this.uniforms, this.pellet_assets);
 
         // ── Draw player ───────────────────────────────────────────────────────
-        this.shapes.player.draw(
-            caller, this.uniforms,
-            this.player.get_transform(),
-            this.materials.player
-        );
+        if (this.camera_mode !== 'first_person') {
+            this.shapes.player.draw(
+                caller, this.uniforms,
+                this.player.get_transform(),
+                this.materials.player
+            );
+        }
 
         // ── Draw ghosts ────────────────────────────────────────────────────────
         const is_frightened = this.frightened_timer > 0;
