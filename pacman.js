@@ -6,7 +6,7 @@ import {PacmanPlayer} from './pacman-player.js';
 import {Ghost} from './pacman-ghosts.js';
 import {CameraController} from './camera.js';
 import {register_key_bindings} from './input.js';
-import {Autopilot} from './autopilot.js';
+import {PacmanAutopilot} from './pacman-autopilot.js';
 
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
 
@@ -57,8 +57,8 @@ export class Pacman extends Component
         this._gameover_el     = null;
         this._win_el          = null;
 
-        // ── Autopilot player ─────────────────────────────────────────────────────────
-        this.autopilot = new Autopilot();
+        // ── PacmanAutopilot player ─────────────────────────────────────────────────────────
+        this.autopilot = new PacmanAutopilot();
         this._reset();
     }
 

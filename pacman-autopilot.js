@@ -176,8 +176,8 @@ function bfs_distance(start_col, start_row, goal_col, goal_row) {
     return Infinity;
 }
 
-// Autopilot class
-export class Autopilot {
+// PacmanAutopilot class
+export class PacmanAutopilot {
     constructor() {
         this._tick_timer  = 0;
         this._queued_dx   = 0;

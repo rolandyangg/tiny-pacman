@@ -21,8 +21,8 @@ export function register_key_bindings(component) {
     });
     component.new_line();
 
-    // ── Autopilot toggle ──────────────────────────────────────────────────────
-    component.key_triggered_button("Toggle Autopilot", ["p"], () => {
+    // ── PacmanAutopilot toggle ──────────────────────────────────────────────────────
+    component.key_triggered_button("Toggle PacmanAutopilot", ["p"], () => {
         component.autopilot_on = !component.autopilot_on;
     });
     component.new_line();
