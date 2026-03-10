@@ -1,11 +1,11 @@
 import {world_to_tile, is_wall} from './pacman-player.js';
-import {get_tile_center_world, MAZE_COLS, MAZE_ROWS} from './pacman-map.js';
 
 /* Tuning Constants */
 // Pacman's behavior changes depending on the following conditions
 // Turn down danger radius and decision tick and power pellet grab radius for faster/more risky decisions
 // Turn up flee lookahead for better escape routing
 // Turn down ghost hunt give up for more aggressive pursuit
+// Change the probabilistic jitter values to make behavior more varied
 const CONFIG = {
     // How close a normal ghost must be to trigger fleeing
     DANGER_RADIUS: 3,
@@ -21,8 +21,37 @@ const CONFIG = {
 
     // Radius of nearest ghost where pacman will choose a power pellet instead
     POWER_PELLET_GRAB_RADIUS: 10,
+
+    // Probability AI makes a mistake - ignores BFS decision and goes randomly
+    MISTAKE_CHANCE: 0.04,
+
+    // Jitter values - probabilistic variation for each parameter
+    DANGER_RADIUS_JITTER: 1.2,
+    FLEE_LOOKAHEAD_JITTER: 3.0,
+    GHOST_HUNT_GIVE_UP_JITTER: 4.0,
+    POWER_PELLET_GRAB_RADIUS_JITTER: 2.0,
+
+    // Global jitter multiplier
+    JITTER_SIGMA:               1.0,
 };
 
+// Box muller helper, returns pair of normal dist samples based on range
+function box_muller() {
+    const u1 = Math.max(1e-10, Math.random());
+    const u2 = Math.random();
+    const mag = Math.sqrt(-2.0 * Math.log(u1));
+    return [
+        mag * Math.cos(2 * Math.PI * u2),
+        mag * Math.sin(2 * Math.PI * u2),
+    ];
+}
+
+// Gaussian sample helper
+function gaussian_sample(base, jitter, sigma, min_val = 0) {
+    if (jitter === 0) return base;
+    const [z] = box_muller();
+    return Math.max(min_val, base + jitter * sigma * z);
+}
 
 // BFS from start_tile toward goal_tile.
 function bfs_toward(start_col, start_row, goal_col, goal_row) {
@@ -66,14 +95,12 @@ function bfs_toward(start_col, start_row, goal_col, goal_row) {
    pick the one whose FLEE_LOOKAHEAD-radius subtree has the greatest minimum
    distance to any threat tile.
 */
-function bfs_flee(start_col, start_row, threat_tiles) {
+function bfs_flee(start_col, start_row, threat_tiles, lookahead) {
     const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
 
-    // pre-compute tile distances
     function min_threat_dist(col, row) {
         let min_d = Infinity;
         for (const [tc, tr] of threat_tiles) {
-            // approximate manhattan distance
             const d = Math.abs(col - tc) + Math.abs(row - tr);
             if (d < min_d) min_d = d;
         }
@@ -98,7 +125,7 @@ function bfs_flee(start_col, start_row, threat_tiles) {
         while (frontier.length > 0) {
             const next = [];
             for (const [c, r, depth] of frontier) {
-                if (depth >= CONFIG.FLEE_LOOKAHEAD) continue;
+                if (depth >= lookahead) continue;
                 for (const [ddx, ddz] of dirs) {
                     const c2 = c + ddx;
                     const r2 = r + ddz;
@@ -157,6 +184,17 @@ export class Autopilot {
         this._queued_dz   = 0;
     }
 
+    // Jitter sampler helper, returns parameters with noise applied
+    _sample_tick_params() {
+        const s = CONFIG.JITTER_SIGMA;
+        return {
+            danger_radius:            gaussian_sample(CONFIG.DANGER_RADIUS,            CONFIG.DANGER_RADIUS_JITTER,            s, 1),
+            flee_lookahead:           gaussian_sample(CONFIG.FLEE_LOOKAHEAD,           CONFIG.FLEE_LOOKAHEAD_JITTER,           s, 2),
+            ghost_hunt_give_up:       gaussian_sample(CONFIG.GHOST_HUNT_GIVE_UP,       CONFIG.GHOST_HUNT_GIVE_UP_JITTER,       s, 1),
+            power_pellet_grab_radius: gaussian_sample(CONFIG.POWER_PELLET_GRAB_RADIUS, CONFIG.POWER_PELLET_GRAB_RADIUS_JITTER, s, 1),
+        };
+    }
+
     update(dt, player, ghosts, pellets, power_pellets, frightened_timer) {
         this._tick_timer -= dt;
         if (this._tick_timer > 0) {
@@ -166,17 +204,33 @@ export class Autopilot {
         }
         this._tick_timer = CONFIG.DECISION_TICK;
 
+        // Sample jittered parameters
+        const p = this._sample_tick_params();
+
         const [pc, pr]   = world_to_tile(player.x, player.z);
         const is_frightened = frightened_timer > 0;
 
         const active_ghosts = ghosts.filter(g => !g.in_house);
         const ghost_tiles   = active_ghosts.map(g => world_to_tile(g.x, g.z));
 
+        // throw mistake, go in random direction
+        if (Math.random() < CONFIG.MISTAKE_CHANCE) {
+            const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+            const legal = dirs.filter(([dx, dz]) => {
+                const [nc, nr] = [pc + dx, pr + dz];
+                return !is_wall(nc, nr);
+            });
+            if (legal.length > 0) {
+                const pick = legal[Math.floor(Math.random() * legal.length)];
+                return this._set(player, pick);
+            }
+        }
+
         //  Priority 1, flee non-frightened ghosts in range
         if (!is_frightened) {
             const threats = ghost_tiles.filter(([gc, gr]) => {
                 const d = Math.abs(gc - pc) + Math.abs(gr - pr);
-                return d <= CONFIG.DANGER_RADIUS;
+                return d <= p.danger_radius;
             });
 
             // check if a power pellet is close enough to grab
@@ -185,7 +239,7 @@ export class Autopilot {
                     if (pp.eaten) return false;
                     const [tc, tr] = world_to_tile(pp.x, pp.z);
                     const d = Math.abs(tc - pc) + Math.abs(tr - pr);
-                    return d <= CONFIG.POWER_PELLET_GRAB_RADIUS;
+                    return d <= p.power_pellet_grab_radius;
                 });
 
                 if (nearby_power) {
@@ -210,7 +264,7 @@ export class Autopilot {
                 const d = bfs_distance(pc, pr, gc, gr);
                 if (d < best_dist) { best_dist = d; best_ghost = [gc, gr]; }
             }
-            if (best_ghost && best_dist <= CONFIG.GHOST_HUNT_GIVE_UP) {
+            if (best_ghost && best_dist <= p.ghost_hunt_give_up) {
                 const dir = bfs_toward(pc, pr, best_ghost[0], best_ghost[1]);
                 if (dir) return this._set(player, dir);
             }
