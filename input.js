@@ -21,14 +21,20 @@ export function register_key_bindings(component) {
     });
     component.new_line();
 
-    // ── Movement ─────────────────────────────────────────────────────────
-    // In first/third person: directions are relative to current facing dir
-    // In top-down: directions are absolute (north/south/east/west)
+    // ── Autopilot toggle ──────────────────────────────────────────────────────
+    component.key_triggered_button("Toggle Autopilot", ["p"], () => {
+        component.autopilot_on = !component.autopilot_on;
+    });
+    component.new_line();
+
+    // ── WASD movement ─────────────────────────────────────────────────────────
+    // In first/third person: directions are relative to current facing.
+    // In top-down:           directions are absolute (north/south/east/west).
 
     component.key_triggered_button("← / Turn Left",  ["a"], () => {
+        if (component.autopilot_on) return; // ignore input during autopilot
         const p = component.player;
         if (_is_local_mode(component)) {
-            // 90 deg CCW of current facing: (fz, -fx)
             p.set_direction(p.last_dir_z, -p.last_dir_x);
         } else {
             p.set_direction(-1, 0);
@@ -36,9 +42,9 @@ export function register_key_bindings(component) {
     });
 
     component.key_triggered_button("→ / Turn Right", ["d"], () => {
+        if (component.autopilot_on) return;
         const p = component.player;
         if (_is_local_mode(component)) {
-            // 90 deg CW of current facing: (-fz, fx)
             p.set_direction(-p.last_dir_z, p.last_dir_x);
         } else {
             p.set_direction(1, 0);
@@ -46,6 +52,7 @@ export function register_key_bindings(component) {
     });
 
     component.key_triggered_button("↑ / Forward",    ["w"], () => {
+        if (component.autopilot_on) return;
         const p = component.player;
         if (_is_local_mode(component)) {
             p.set_direction(p.last_dir_x, p.last_dir_z);
@@ -55,6 +62,7 @@ export function register_key_bindings(component) {
     });
 
     component.key_triggered_button("↓ / Backward",   ["s"], () => {
+        if (component.autopilot_on) return;
         const p = component.player;
         if (_is_local_mode(component)) {
             p.set_direction(-p.last_dir_x, -p.last_dir_z);
@@ -66,7 +74,7 @@ export function register_key_bindings(component) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// Returns true when controls should be relative to pac mans facing direction
+// Returns true when controls should be relative to Pac-Man's facing direction
 function _is_local_mode(component) {
     const mode = component.camera.mode;
     return mode === 'first_person' || mode === 'third_person';

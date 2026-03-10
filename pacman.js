@@ -6,6 +6,7 @@ import {PacmanPlayer} from './pacman-player.js';
 import {Ghost} from './pacman-ghosts.js';
 import {CameraController} from './camera.js';
 import {register_key_bindings} from './input.js';
+import {Autopilot} from './autopilot.js';
 
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
 
@@ -17,7 +18,7 @@ const PELLET_POINTS        = 10;
 const POWER_PELLET_POINTS  = 50;
 const GHOST_EAT_POINTS     = 200;
 const FRIGHTENED_DURATION  = 8;     // seconds after eating power pellet
-const COLLECT_RADIUS       = 0.6;   // world-units; pellet eaten when player centre is within this
+const COLLECT_RADIUS       = 0.6;   // world-units; pellet eaten when player center is within this
 const GHOST_COLLIDE_RADIUS = 0.55;  // player + ghost touch (sum of radii ~0.67, slightly generous)
 
 export class Pacman extends Component
@@ -56,6 +57,8 @@ export class Pacman extends Component
         this._gameover_el     = null;
         this._win_el          = null;
 
+        // ── Autopilot player ─────────────────────────────────────────────────────────
+        this.autopilot = new Autopilot();
         this._reset();
     }
 
@@ -77,6 +80,7 @@ export class Pacman extends Component
         this.last_t           = undefined;
 
         this.camera.reset();
+        this.autopilot_on = false;
 
         // Hide overlays if they already exist
         if (this._gameover_el) this._gameover_el.classList.remove('visible');
@@ -456,7 +460,15 @@ export class Pacman extends Component
         // ── Game logic (skip when paused or game is over) ─────────────────────
         if (this.uniforms.animate && !this.game_won && !this.game_over)
         {
-            // Move player
+            // Compute autopilot decision if it's update time
+            if (this.autopilot_on) {
+                this.autopilot.update(
+                    dt, this.player, this.ghosts,
+                    this.pellets, this.power_pellets,
+                    this.frightened_timer
+                );
+            }
+            // Move player in direction
             this.player.update(dt);
 
             // Pellet collection
