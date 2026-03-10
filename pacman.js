@@ -87,12 +87,20 @@ export class Pacman extends Component
     _init_hud(caller) {
         const canvas    = caller.canvas;
         if (!canvas) return;
-        const container = canvas.parentElement;
-        if (!container) return;
 
-        // Make container the positioning parent for overlays
-        container.style.position = 'relative';
-        container.style.display  = 'block';
+        // Re-use wrapper if already created (e.g. after _reset)
+        let container = document.getElementById('pacman-canvas-wrapper');
+        if (!container) {
+            // Insert a positioned wrapper around the canvas so our
+            // absolute-positioned overlays sit on top of the game view,
+            // not below it in the page flow.
+            container = document.createElement('div');
+            container.id = 'pacman-canvas-wrapper';
+            container.style.cssText =
+                'position:relative; display:inline-block; line-height:0; width:100%;';
+            canvas.parentElement.insertBefore(container, canvas);
+            container.appendChild(canvas);
+        }
 
         // ── Google Font ───────────────────────────────────────────────────────
         if (!document.getElementById('pacman-gfont')) {
