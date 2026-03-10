@@ -24,7 +24,7 @@ export function register_key_bindings(component) {
     component.new_line();
 
     // ── Cinematic camera toggle ──────────────────────────────────────────────────────
-    component.key_triggered_button("Toggle PacmanAutopilot", ["p"], () => {
+    component.key_triggered_button("Toggle Cinematic Camera", ["p"], () => {
         component.autopilot_on = !component.autopilot_on;
         component.camera.toggle_cinematic();
     });
