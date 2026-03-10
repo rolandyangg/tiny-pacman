@@ -135,22 +135,27 @@ export class Pacman extends Component
                 .hud-score-block {
                     display: flex;
                     flex-direction: column;
-                    gap: 4px;
+                    gap: 0;
                 }
                 .hud-label {
+                    display: block;
                     color: #ffffff;
                     font-family: 'Press Start 2P', monospace;
-                    font-size: 9px;
+                    font-size: 8px;
                     letter-spacing: 2px;
                     text-shadow: 1px 1px 0 #000;
-                    opacity: 0.85;
+                    opacity: 0.75;
+                    line-height: 1;
+                    margin-bottom: 7px;
                 }
                 .hud-score-value {
+                    display: block;
                     color: #FFE000;
                     font-family: 'Press Start 2P', monospace;
                     font-size: 20px;
                     letter-spacing: 1px;
                     text-shadow: 0 0 10px rgba(255,224,0,0.7), 2px 2px 0 #000;
+                    line-height: 1;
                 }
 
                 /* Lives block */
@@ -158,7 +163,7 @@ export class Pacman extends Component
                     display: flex;
                     flex-direction: column;
                     align-items: flex-end;
-                    gap: 6px;
+                    gap: 0;
                 }
                 .hud-lives-icons {
                     display: flex;
@@ -237,17 +242,21 @@ export class Pacman extends Component
 
                 /* Final score display */
                 .overlay-final-score-label {
+                    display: block;
                     color: #aaaaaa;
                     font-size: 9px;
                     letter-spacing: 3px;
-                    margin-bottom: 8px;
+                    margin-bottom: 18px;
                     text-shadow: 1px 1px 0 #000;
+                    line-height: 1;
                 }
                 .overlay-final-score-value {
+                    display: block;
                     color: #FFE000;
                     font-size: clamp(24px, 5vw, 42px);
                     text-shadow: 0 0 16px rgba(255,224,0,0.8), 3px 3px 0 #000;
                     margin-bottom: 36px;
+                    line-height: 1;
                 }
 
                 /* Restart / Play Again button */
