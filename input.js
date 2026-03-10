@@ -5,9 +5,11 @@ export function register_key_bindings(component) {
         component.camera.mode = 'top_down';
     });
     component.key_triggered_button("Third-Person Camera", ["2"], () => {
+        if (component.camera.mode === 'cinematic') return;
         component.camera.mode = 'third_person';
     });
     component.key_triggered_button("First-Person Camera", ["3"], () => {
+        if (component.camera.mode === 'cinematic') return;
         component.camera.mode = 'first_person';
     });
     component.new_line();
@@ -21,9 +23,10 @@ export function register_key_bindings(component) {
     });
     component.new_line();
 
-    // ── PacmanAutopilot toggle ──────────────────────────────────────────────────────
+    // ── Cinematic camera toggle ──────────────────────────────────────────────────────
     component.key_triggered_button("Toggle PacmanAutopilot", ["p"], () => {
         component.autopilot_on = !component.autopilot_on;
+        component.camera.toggle_cinematic();
     });
     component.new_line();
 
