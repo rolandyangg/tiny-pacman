@@ -23,7 +23,7 @@ const CONFIG = {
     POWER_PELLET_GRAB_RADIUS: 10,
 
     // Probability AI makes a mistake - ignores BFS decision and goes randomly
-    MISTAKE_CHANCE: 0.04,
+    MISTAKE_CHANCE: 0.005,
 
     // Jitter values - probabilistic variation for each parameter
     DANGER_RADIUS_JITTER: 1.2,
