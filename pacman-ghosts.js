@@ -51,6 +51,7 @@ export class Ghost {
     this.color = colors[ghost_index % 4];
     this.frightened_color = [0.2, 0.2, 1, 1];
     this.eaten = false; // when eaten during frightened, respawn
+    this.in_house = true;
   }
 
   /** Choose next direction: chase (target pacman), scatter (target corner), or frightened (random). */
@@ -114,6 +115,13 @@ export class Ghost {
     const [col, row] = world_to_tile(this.x, this.z);
     const [tile_cx, tile_cz] = get_tile_center_world(col, row);
 
+    // Detect when ghost has left the house for the first time
+    if (this.in_house) {
+      if (col < 11 || col > 16 || row < 12 || row > 16) {
+        this.in_house = false;
+      }
+    }
+
     // When stationary (dir 0,0), use a generous snap so we always pick a direction at spawn
     const at_rest = this.dir_x === 0 && this.dir_z === 0;
     const SNAP = at_rest ? 0.5 : 0.3;
@@ -157,5 +165,6 @@ export class Ghost {
     this.dir_x = 0;
     this.dir_z = 0;
     this.eaten = false;
+    this.in_house = true;
   }
 }

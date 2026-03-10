@@ -169,7 +169,8 @@ export class Autopilot {
         const [pc, pr]   = world_to_tile(player.x, player.z);
         const is_frightened = frightened_timer > 0;
 
-        const ghost_tiles = ghosts.map(g => world_to_tile(g.x, g.z));
+        const active_ghosts = ghosts.filter(g => !g.in_house);
+        const ghost_tiles   = active_ghosts.map(g => world_to_tile(g.x, g.z));
 
         //  Priority 1, flee non-frightened ghosts in range
         if (!is_frightened) {
@@ -203,8 +204,8 @@ export class Autopilot {
         if (is_frightened) {
             let best_ghost = null;
             let best_dist  = Infinity;
-            for (let i = 0; i < ghosts.length; i++) {
-                if (ghosts[i].eaten) continue; // skip already eaten ghosts
+            for (let i = 0; i < active_ghosts.length; i++) {
+                if (active_ghosts[i].eaten) continue; // skip already eaten ghosts
                 const [gc, gr] = ghost_tiles[i];
                 const d = bfs_distance(pc, pr, gc, gr);
                 if (d < best_dist) { best_dist = d; best_ghost = [gc, gr]; }
