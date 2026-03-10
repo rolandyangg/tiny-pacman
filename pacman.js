@@ -50,6 +50,12 @@ export class Pacman extends Component
         // ── Camera ────────────────────────────────────────────────────────────
         this.camera = new CameraController();
 
+        // ── HUD state ─────────────────────────────────────────────────────────
+        this._hud_initialized = false;
+        this._hud_el          = null;
+        this._gameover_el     = null;
+        this._win_el          = null;
+
         this._reset();
     }
 
@@ -71,25 +77,352 @@ export class Pacman extends Component
         this.last_t           = undefined;
 
         this.camera.reset();
+
+        // Hide overlays if they already exist
+        if (this._gameover_el) this._gameover_el.classList.remove('visible');
+        if (this._win_el)      this._win_el.classList.remove('visible');
+    }
+
+    // ── HUD Initialization (called once when canvas is available) ─────────────
+    _init_hud(caller) {
+        const canvas    = caller.canvas;
+        if (!canvas) return;
+
+        // Re-use wrapper if already created (e.g. after _reset)
+        let container = document.getElementById('pacman-canvas-wrapper');
+        if (!container) {
+            // Insert a positioned wrapper around the canvas so our
+            // absolute-positioned overlays sit on top of the game view,
+            // not below it in the page flow.
+            container = document.createElement('div');
+            container.id = 'pacman-canvas-wrapper';
+            container.style.cssText =
+                'position:relative; display:inline-block; line-height:0; width:100%;';
+            canvas.parentElement.insertBefore(container, canvas);
+            container.appendChild(canvas);
+        }
+
+        // ── Google Font ───────────────────────────────────────────────────────
+        if (!document.getElementById('pacman-gfont')) {
+            const link = document.createElement('link');
+            link.id   = 'pacman-gfont';
+            link.rel  = 'stylesheet';
+            link.href = 'https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap';
+            document.head.appendChild(link);
+        }
+
+        // ── Styles ────────────────────────────────────────────────────────────
+        if (!document.getElementById('pacman-hud-style')) {
+            const style = document.createElement('style');
+            style.id    = 'pacman-hud-style';
+            style.textContent = `
+                /* ── HUD bar (top of canvas) ─────────────────────── */
+                .pacman-hud {
+                    position: absolute;
+                    top: 0; left: 0; right: 0;
+                    padding: 10px 18px 18px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-start;
+                    background: linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, transparent 100%);
+                    font-family: 'Press Start 2P', 'Courier New', monospace;
+                    pointer-events: none;
+                    z-index: 10;
+                    box-sizing: border-box;
+                }
+
+                /* Score block */
+                .hud-score-block {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0;
+                }
+                .hud-label {
+                    display: block;
+                    color: #ffffff;
+                    font-family: 'Press Start 2P', monospace;
+                    font-size: 8px;
+                    letter-spacing: 2px;
+                    text-shadow: 1px 1px 0 #000;
+                    opacity: 0.75;
+                    line-height: 1;
+                    margin-bottom: 7px;
+                }
+                .hud-score-value {
+                    display: block;
+                    color: #FFE000;
+                    font-family: 'Press Start 2P', monospace;
+                    font-size: 20px;
+                    letter-spacing: 1px;
+                    text-shadow: 0 0 10px rgba(255,224,0,0.7), 2px 2px 0 #000;
+                    line-height: 1;
+                }
+
+                /* Lives block */
+                .hud-lives-block {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: flex-end;
+                    gap: 0;
+                }
+                .hud-lives-icons {
+                    display: flex;
+                    gap: 7px;
+                    align-items: center;
+                }
+                /* Pac-Man life icon via clip-path */
+                .life-icon {
+                    width: 20px;
+                    height: 20px;
+                    background: #FFE000;
+                    border-radius: 50%;
+                    /* open mouth facing right */
+                    clip-path: polygon(
+                        50% 50%,
+                        100% 25%,
+                        100% 0%,
+                        0%   0%,
+                        0%   100%,
+                        100% 100%,
+                        100% 75%
+                    );
+                    box-shadow: 0 0 6px rgba(255,224,0,0.8);
+                }
+
+                /* ── Frightened timer bar ────────────────────────── */
+                .pacman-fright-bar-wrap {
+                    position: absolute;
+                    bottom: 0; left: 0; right: 0;
+                    height: 5px;
+                    background: rgba(0,0,0,0.5);
+                    pointer-events: none;
+                    z-index: 10;
+                    display: none;
+                }
+                .pacman-fright-bar-wrap.visible { display: block; }
+                .pacman-fright-bar {
+                    height: 100%;
+                    background: linear-gradient(90deg, #5555ff, #aaaaff);
+                    transition: width 0.1s linear;
+                    box-shadow: 0 0 8px #5555ff;
+                }
+
+                /* ── Shared overlay backdrop ─────────────────────── */
+                .pacman-overlay {
+                    position: absolute;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    display: none;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    background: rgba(0, 0, 0, 0.78);
+                    font-family: 'Press Start 2P', 'Courier New', monospace;
+                    z-index: 20;
+                    gap: 0;
+                }
+                .pacman-overlay.visible { display: flex; }
+
+                /* ── Game Over overlay ───────────────────────────── */
+                .overlay-gameover-title {
+                    font-size: clamp(22px, 5vw, 40px);
+                    color: #FF2222;
+                    text-shadow: 0 0 24px #FF0000, 3px 3px 0 #000;
+                    margin-bottom: 28px;
+                    animation: pacman-blink 1.1s step-start infinite;
+                    letter-spacing: 3px;
+                }
+                /* ── Win overlay ─────────────────────────────────── */
+                .overlay-win-title {
+                    font-size: clamp(20px, 4.5vw, 36px);
+                    color: #00FF88;
+                    text-shadow: 0 0 24px #00FF88, 3px 3px 0 #005533;
+                    margin-bottom: 28px;
+                    letter-spacing: 3px;
+                }
+
+                /* Final score display */
+                .overlay-final-score-label {
+                    display: block;
+                    color: #aaaaaa;
+                    font-size: 9px;
+                    letter-spacing: 3px;
+                    margin-bottom: 18px;
+                    text-shadow: 1px 1px 0 #000;
+                    line-height: 1;
+                }
+                .overlay-final-score-value {
+                    display: block;
+                    color: #FFE000;
+                    font-size: clamp(24px, 5vw, 42px);
+                    text-shadow: 0 0 16px rgba(255,224,0,0.8), 3px 3px 0 #000;
+                    margin-bottom: 36px;
+                    line-height: 1;
+                }
+
+                /* Restart / Play Again button */
+                .overlay-btn {
+                    padding: 14px 28px;
+                    font-family: 'Press Start 2P', monospace;
+                    font-size: clamp(10px, 2vw, 14px);
+                    color: #000;
+                    background: #FFE000;
+                    border: none;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    box-shadow: 0 0 16px rgba(255,224,0,0.6), 4px 4px 0 #806000;
+                    letter-spacing: 1px;
+                    transition: transform 0.1s, box-shadow 0.1s;
+                    pointer-events: all;
+                }
+                .overlay-btn:hover {
+                    transform: scale(1.06);
+                    box-shadow: 0 0 28px rgba(255,224,0,0.9), 4px 4px 0 #806000;
+                }
+                .overlay-btn:active {
+                    transform: scale(0.96);
+                    box-shadow: 0 0 8px rgba(255,224,0,0.5), 2px 2px 0 #806000;
+                }
+
+                /* Pac-Man dot row decoration */
+                .overlay-dots {
+                    display: flex;
+                    gap: 10px;
+                    margin-bottom: 22px;
+                }
+                .overlay-dot {
+                    width: 10px;
+                    height: 10px;
+                    background: #FFE000;
+                    border-radius: 50%;
+                    opacity: 0.7;
+                }
+
+                /* Blinking animation */
+                @keyframes pacman-blink {
+                    0%, 100% { opacity: 1; }
+                    50%       { opacity: 0; }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
+        // ── HUD bar ───────────────────────────────────────────────────────────
+        this._hud_el = document.createElement('div');
+        this._hud_el.className = 'pacman-hud';
+        this._hud_el.innerHTML = `
+            <div class="hud-score-block">
+                <span class="hud-label">SCORE</span>
+                <span class="hud-score-value" id="hud-score-val">0</span>
+            </div>
+            <div class="hud-lives-block">
+                <span class="hud-label">LIVES</span>
+                <div class="hud-lives-icons" id="hud-lives-icons"></div>
+            </div>
+        `;
+        container.appendChild(this._hud_el);
+
+        // ── Frightened power-up timer bar ─────────────────────────────────────
+        this._fright_bar_wrap = document.createElement('div');
+        this._fright_bar_wrap.className = 'pacman-fright-bar-wrap';
+        this._fright_bar_wrap.innerHTML = `<div class="pacman-fright-bar" id="fright-bar-fill"></div>`;
+        container.appendChild(this._fright_bar_wrap);
+
+        // ── Game Over overlay ─────────────────────────────────────────────────
+        this._gameover_el = document.createElement('div');
+        this._gameover_el.className = 'pacman-overlay';
+        this._gameover_el.innerHTML = `
+            <div class="overlay-gameover-title">GAME OVER</div>
+            <div class="overlay-dots">
+                <div class="overlay-dot"></div><div class="overlay-dot"></div>
+                <div class="overlay-dot"></div><div class="overlay-dot"></div>
+                <div class="overlay-dot"></div>
+            </div>
+            <div class="overlay-final-score-label">FINAL SCORE</div>
+            <div class="overlay-final-score-value" id="gameover-score-val">0</div>
+            <button class="overlay-btn" id="gameover-restart-btn">▶ PLAY AGAIN</button>
+        `;
+        container.appendChild(this._gameover_el);
+
+        // ── Win overlay ───────────────────────────────────────────────────────
+        this._win_el = document.createElement('div');
+        this._win_el.className = 'pacman-overlay';
+        this._win_el.innerHTML = `
+            <div class="overlay-win-title">YOU WIN! 🎉</div>
+            <div class="overlay-dots">
+                <div class="overlay-dot"></div><div class="overlay-dot"></div>
+                <div class="overlay-dot"></div><div class="overlay-dot"></div>
+                <div class="overlay-dot"></div>
+            </div>
+            <div class="overlay-final-score-label">FINAL SCORE</div>
+            <div class="overlay-final-score-value" id="win-score-val">0</div>
+            <button class="overlay-btn" id="win-restart-btn">▶ PLAY AGAIN</button>
+        `;
+        container.appendChild(this._win_el);
+
+        // ── Button listeners ──────────────────────────────────────────────────
+        document.getElementById('gameover-restart-btn').addEventListener('click', () => {
+            this._reset();
+        });
+        document.getElementById('win-restart-btn').addEventListener('click', () => {
+            this._reset();
+        });
+
+        this._hud_initialized = true;
+    }
+
+    // ── HUD per-frame update ──────────────────────────────────────────────────
+    _update_hud() {
+        if (!this._hud_initialized) return;
+
+        // Score
+        const scoreEl = document.getElementById('hud-score-val');
+        if (scoreEl) scoreEl.textContent = this.score ?? 0;
+
+        // Lives — rebuild icons only when count changes
+        const livesEl = document.getElementById('hud-lives-icons');
+        if (livesEl) {
+            const count = Math.max(0, this.lives ?? 0);
+            if (livesEl.childElementCount !== count) {
+                livesEl.innerHTML = '';
+                for (let i = 0; i < count; i++) {
+                    const icon = document.createElement('div');
+                    icon.className = 'life-icon';
+                    livesEl.appendChild(icon);
+                }
+            }
+        }
+
+        // Frightened power-up bar
+        if (this._fright_bar_wrap) {
+            const fill = document.getElementById('fright-bar-fill');
+            if (this.frightened_timer > 0) {
+                this._fright_bar_wrap.classList.add('visible');
+                const pct = (this.frightened_timer / FRIGHTENED_DURATION) * 100;
+                if (fill) fill.style.width = pct + '%';
+            } else {
+                this._fright_bar_wrap.classList.remove('visible');
+            }
+        }
+
+        // Game Over overlay
+        if (this.game_over && this._gameover_el) {
+            const el = document.getElementById('gameover-score-val');
+            if (el) el.textContent = this.score ?? 0;
+            this._gameover_el.classList.add('visible');
+        }
+
+        // Win overlay
+        if (this.game_won && this._win_el) {
+            const el = document.getElementById('win-score-val');
+            if (el) el.textContent = this.score ?? 0;
+            this._win_el.classList.add('visible');
+        }
     }
 
     // ── Controls / key bindings ───────────────────────────────────────────────
     render_controls()
     {
         this.control_panel.innerHTML += "Pac-Man &nbsp;|&nbsp; WASD to move<br>";
-
-        // Live score / lives readout — updates every frame automatically
-        this.live_string(box => {
-            box.textContent =
-                `Score: ${this.score ?? 0}   |   Lives: ${this.lives ?? 3}`;
-        });
-        this.new_line();
-        this.live_string(box => {
-            if (this.game_won)       box.textContent = "🎉 YOU WIN!";
-            else if (this.game_over) box.textContent = "💀 GAME OVER";
-            else                     box.textContent = "";
-        });
-        this.new_line();
 
         this.key_triggered_button("(Un)pause", ["Alt", "a"], () => this.uniforms.animate ^= 1);
         this.key_triggered_button("Reset",     ["Alt", "r"], () => this._reset());
@@ -105,6 +438,11 @@ export class Pacman extends Component
         this.uniforms.lights = [
             defs.Phong_Shader.light_source(vec4(0, 1, 1, 0), color(1, 1, 1, 1), 100000)
         ];
+
+        // ── Lazy HUD init (needs caller.canvas to be available) ───────────────
+        if (!this._hud_initialized && caller.canvas) {
+            this._init_hud(caller);
+        }
 
         // ── Delta time ────────────────────────────────────────────────────────
         const t = this.uniforms.animation_time / 1000;
@@ -219,5 +557,8 @@ export class Pacman extends Component
                 : { ...this.materials.ghost, color: color(...ghost.color) };
             this.shapes.ghost.draw(caller, this.uniforms, ghost.get_transform(), mat);
         }
+
+        // ── Update HUD overlay ────────────────────────────────────────────────
+        this._update_hud();
     }
 }
