@@ -1,7 +1,11 @@
+/**
+ * register_key_bindings — wires up all keyboard input for the Pacman component.
+ */
 export function register_key_bindings(component) {
 
     // ── Camera mode selection ─────────────────────────────────────────────────
-    component.key_triggered_button("Top-Down Camera",    ["1"], () => {
+    component.key_triggered_button("Top-Down Camera",     ["1"], () => {
+        if (component.camera.mode === 'cinematic') return;
         component.camera.mode = 'top_down';
     });
     component.key_triggered_button("Third-Person Camera", ["2"], () => {
