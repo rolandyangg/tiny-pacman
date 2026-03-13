@@ -2,7 +2,7 @@ import {tiny, defs} from './examples/common.js';
 import {get_wall_positions, get_pellet_positions, get_power_pellet_positions,
     MAZE_COLS, MAZE_ROWS, WALL_HEIGHT, FLOOR_MARGIN} from './pacman-map.js';
 import {Pellet, PowerPellet, create_pellet_assets} from './pacman-pellets.js';
-import {PacmanPlayer} from './pacman-player.js';
+import {PacmanPlayer, world_to_tile} from './pacman-player.js';
 import {Ghost} from './pacman-ghosts.js';
 import {CameraController} from './camera.js';
 import {register_key_bindings} from './input.js';
@@ -72,6 +72,9 @@ export class Pacman extends Component
         this.frightened_timer = 0;
         this.score            = 0;
         this.lives            = 3;
+        this.dots_eaten       = 0;
+        this.last_dot_time    = 0;
+        this.level            = 1;
         this.game_won         = false;
         this.game_over        = false;
         this.last_t           = undefined;
@@ -467,6 +470,8 @@ export class Pacman extends Component
                     if (Math.sqrt(dx * dx + dz * dz) < COLLECT_RADIUS) {
                         pellet.eat();
                         this.score += PELLET_POINTS;
+                        this.dots_eaten++;
+                        this.last_dot_time = t;
                     }
                 }
             }
@@ -480,6 +485,8 @@ export class Pacman extends Component
                         pellet.eat();
                         this.score += POWER_PELLET_POINTS;
                         this.frightened_timer = FRIGHTENED_DURATION;
+                        this.dots_eaten++;
+                        this.last_dot_time = t;
                     }
                 }
             }
@@ -491,8 +498,28 @@ export class Pacman extends Component
 
             // Ghost AI: chase, scatter, or flee
             const is_frightened = this.frightened_timer > 0;
+            const [pacman_col, pacman_row] = world_to_tile(this.player.x, this.player.z);
+            const blinky = this.ghosts[0];
+            const [blinky_col, blinky_row] = blinky ? world_to_tile(blinky.x, blinky.z) : [pacman_col, pacman_row];
+            let release_ghost_index = 0;
+            for (let i = 1; i <= 3; i++) {
+                if (!this.ghosts[i].released) { release_ghost_index = i; break; }
+            }
+            const ghost_ctx = {
+                dots_eaten: this.dots_eaten,
+                last_dot_time: this.last_dot_time,
+                level: this.level,
+                boredom_force_release: (t - this.last_dot_time) > 4,
+                release_ghost_index,
+                pacman_col,
+                pacman_row,
+                pacman_dir_x: this.player.last_dir_x,
+                pacman_dir_z: this.player.last_dir_z,
+                blinky_col,
+                blinky_row,
+            };
             for (const ghost of this.ghosts) {
-                ghost.update(dt, this.player.x, this.player.z, is_frightened, t);
+                ghost.update(dt, this.player.x, this.player.z, is_frightened, t, ghost_ctx);
             }
 
             // Ghost–player collision
@@ -507,6 +534,8 @@ export class Pacman extends Component
                         this.lives--;
                         this.player = new PacmanPlayer(START_X, START_Z);
                         for (const g of this.ghosts) g.respawn();
+                        this.dots_eaten = 0;
+                        this.last_dot_time = t;
                         if (this.lives <= 0) this.game_over = true;
                         break;
                     }
