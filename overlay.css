@@ -1,0 +1,259 @@
+/* ── HUD bar (top of canvas) ─────────────────────── */
+.pacman-hud {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    padding: 10px 18px 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, transparent 100%);
+    font-family: 'Press Start 2P', 'Courier New', monospace;
+    pointer-events: none;
+    z-index: 10;
+    box-sizing: border-box;
+}
+
+/* Score block */
+.hud-score-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+.hud-label {
+    display: block;
+    color: #ffffff;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 8px;
+    letter-spacing: 2px;
+    text-shadow: 1px 1px 0 #000;
+    opacity: 0.75;
+    line-height: 1;
+    margin-bottom: 7px;
+}
+.hud-score-value {
+    display: block;
+    color: #FFE000;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 20px;
+    letter-spacing: 1px;
+    text-shadow: 0 0 10px rgba(255,224,0,0.7), 2px 2px 0 #000;
+    line-height: 1;
+}
+
+/* Lives block */
+.hud-lives-block {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0;
+}
+.hud-lives-icons {
+    display: flex;
+    gap: 7px;
+    align-items: center;
+}
+/* Pac-Man life icon via clip-path */
+.life-icon {
+    width: 20px;
+    height: 20px;
+    background: #FFE000;
+    border-radius: 50%;
+    /* open mouth facing right */
+    clip-path: polygon(
+        50% 50%,
+        100% 25%,
+        100% 0%,
+        0%   0%,
+        0%   100%,
+        100% 100%,
+        100% 75%
+    );
+    box-shadow: 0 0 6px rgba(255,224,0,0.8);
+}
+
+/* ── Frightened timer bar ────────────────────────── */
+.pacman-fright-bar-wrap {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 5px;
+    background: rgba(0,0,0,0.5);
+    pointer-events: none;
+    z-index: 10;
+    display: none;
+}
+.pacman-fright-bar-wrap.visible { display: block; }
+.pacman-fright-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #5555ff, #aaaaff);
+    transition: width 0.1s linear;
+    box-shadow: 0 0 8px #5555ff;
+}
+
+/* ── Cinematic letterbox bars ────────────────────── */
+.pacman-cinematic-bar {
+    position: absolute;
+    left: 0; right: 0;
+    height: 0;
+    background: #000;
+    z-index: 15;
+    transition: height 0.6s cubic-bezier(0.77, 0, 0.18, 1);
+    pointer-events: none;
+}
+.pacman-cinematic-bar.top    { top: 0; }
+.pacman-cinematic-bar.bottom { bottom: -10px; }
+.pacman-cinematic-bar.active { height: 11%; }
+
+/* ── LIVE CAM badge ──────────────────────────────── */
+.pacman-livecam {
+    position: absolute;
+    top: 14%;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 16;
+    transition: opacity 0.4s ease 0.5s;
+}
+.pacman-livecam.visible { opacity: 1; }
+.livecam-dot {
+    width: 11px;
+    height: 11px;
+    background: #ff2222;
+    border-radius: 50%;
+    box-shadow: 0 0 8px #ff0000;
+    animation: livecam-pulse 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+}
+@keyframes livecam-pulse {
+    0%, 100% { opacity: 1;   box-shadow: 0 0 8px #ff0000; }
+    50%       { opacity: 0.3; box-shadow: 0 0 2px #ff0000; }
+}
+.livecam-text {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    color: #ffffff;
+    letter-spacing: 3px;
+    text-shadow: 0 0 8px rgba(255,255,255,0.5), 1px 1px 0 #000;
+    line-height: 1;
+}
+.livecam-timecode {
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    color: rgba(255,255,255,0.55);
+    letter-spacing: 1px;
+    text-shadow: 1px 1px 0 #000;
+    line-height: 1;
+    margin-left: 4px;
+}
+
+/* ── Vignette ────────────────────────────────────── */
+.pacman-vignette {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center,
+        transparent 55%, rgba(0,0,0,0.45) 100%);
+    pointer-events: none;
+    z-index: 14;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+}
+.pacman-vignette.visible { opacity: 1; }
+
+/* ── Shared overlay backdrop ─────────────────────── */
+.pacman-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.78);
+    font-family: 'Press Start 2P', 'Courier New', monospace;
+    z-index: 20;
+    gap: 0;
+}
+.pacman-overlay.visible { display: flex; }
+
+/* ── Game Over overlay ───────────────────────────── */
+.overlay-gameover-title {
+    font-size: clamp(22px, 5vw, 40px);
+    color: #FF2222;
+    text-shadow: 0 0 24px #FF0000, 3px 3px 0 #000;
+    margin-bottom: 28px;
+    animation: pacman-blink 1.1s step-start infinite;
+    letter-spacing: 3px;
+}
+/* ── Win overlay ─────────────────────────────────── */
+.overlay-win-title {
+    font-size: clamp(20px, 4.5vw, 36px);
+    color: #00FF88;
+    text-shadow: 0 0 24px #00FF88, 3px 3px 0 #005533;
+    margin-bottom: 28px;
+    letter-spacing: 3px;
+}
+
+/* Final score display */
+.overlay-final-score-label {
+    display: block;
+    color: #aaaaaa;
+    font-size: 9px;
+    letter-spacing: 3px;
+    margin-bottom: 18px;
+    text-shadow: 1px 1px 0 #000;
+    line-height: 1;
+}
+.overlay-final-score-value {
+    display: block;
+    color: #FFE000;
+    font-size: clamp(24px, 5vw, 42px);
+    text-shadow: 0 0 16px rgba(255,224,0,0.8), 3px 3px 0 #000;
+    margin-bottom: 36px;
+    line-height: 1;
+}
+
+/* Restart / Play Again button */
+.overlay-btn {
+    padding: 14px 28px;
+    font-family: 'Press Start 2P', monospace;
+    font-size: clamp(10px, 2vw, 14px);
+    color: #000;
+    background: #FFE000;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    box-shadow: 0 0 16px rgba(255,224,0,0.6), 4px 4px 0 #806000;
+    letter-spacing: 1px;
+    transition: transform 0.1s, box-shadow 0.1s;
+    pointer-events: all;
+}
+.overlay-btn:hover {
+    transform: scale(1.06);
+    box-shadow: 0 0 28px rgba(255,224,0,0.9), 4px 4px 0 #806000;
+}
+.overlay-btn:active {
+    transform: scale(0.96);
+    box-shadow: 0 0 8px rgba(255,224,0,0.5), 2px 2px 0 #806000;
+}
+
+/* Pac-Man dot row decoration */
+.overlay-dots {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 22px;
+}
+.overlay-dot {
+    width: 10px;
+    height: 10px;
+    background: #FFE000;
+    border-radius: 50%;
+    opacity: 0.7;
+}
+
+/* Blinking animation */
+@keyframes pacman-blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
+}
