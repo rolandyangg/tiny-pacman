@@ -6,6 +6,7 @@ import {PacmanPlayer, world_to_tile} from './pacman-player.js';
 import {Ghost} from './pacman-ghosts.js';
 import {CameraController} from './camera.js';
 import {register_key_bindings} from './input.js';
+import {PacmanAutopilot} from './pacman-autopilot.js';
 
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
 
@@ -17,7 +18,7 @@ const PELLET_POINTS        = 10;
 const POWER_PELLET_POINTS  = 50;
 const GHOST_EAT_POINTS     = 200;
 const FRIGHTENED_DURATION  = 8;     // seconds after eating power pellet
-const COLLECT_RADIUS       = 0.6;   // world-units; pellet eaten when player centre is within this
+const COLLECT_RADIUS       = 0.6;   // world-units; pellet eaten when player center is within this
 const GHOST_COLLIDE_RADIUS = 0.55;  // player + ghost touch (sum of radii ~0.67, slightly generous)
 
 export class Pacman extends Component
@@ -56,6 +57,8 @@ export class Pacman extends Component
         this._gameover_el     = null;
         this._win_el          = null;
 
+        // ── PacmanAutopilot player ─────────────────────────────────────────────────────────
+        this.autopilot = new PacmanAutopilot();
         this._reset();
     }
 
@@ -80,6 +83,7 @@ export class Pacman extends Component
         this.last_t           = undefined;
 
         this.camera.reset();
+        this.autopilot_on = false;
 
         // Hide overlays if they already exist
         if (this._gameover_el) this._gameover_el.classList.remove('visible');
@@ -210,6 +214,79 @@ export class Pacman extends Component
                     box-shadow: 0 0 8px #5555ff;
                 }
 
+                /* ── Cinematic letterbox bars ────────────────────── */
+                .pacman-cinematic-bar {
+                    position: absolute;
+                    left: 0; right: 0;
+                    height: 0;
+                    background: #000;
+                    z-index: 15;
+                    transition: height 0.6s cubic-bezier(0.77, 0, 0.18, 1);
+                    pointer-events: none;
+                }
+                .pacman-cinematic-bar.top    { top: 0; }
+                .pacman-cinematic-bar.bottom { bottom: -10px; }
+                .pacman-cinematic-bar.active { height: 11%; }
+
+                /* ── LIVE CAM badge ──────────────────────────────── */
+                .pacman-livecam {
+                    position: absolute;
+                    top: 14%;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    opacity: 0;
+                    pointer-events: none;
+                    z-index: 16;
+                    transition: opacity 0.4s ease 0.5s;
+                }
+                .pacman-livecam.visible { opacity: 1; }
+                .livecam-dot {
+                    width: 11px;
+                    height: 11px;
+                    background: #ff2222;
+                    border-radius: 50%;
+                    box-shadow: 0 0 8px #ff0000;
+                    animation: livecam-pulse 1.4s ease-in-out infinite;
+                    flex-shrink: 0;
+                }
+                @keyframes livecam-pulse {
+                    0%, 100% { opacity: 1;   box-shadow: 0 0 8px #ff0000; }
+                    50%       { opacity: 0.3; box-shadow: 0 0 2px #ff0000; }
+                }
+                .livecam-text {
+                    font-family: 'Press Start 2P', monospace;
+                    font-size: 9px;
+                    color: #ffffff;
+                    letter-spacing: 3px;
+                    text-shadow: 0 0 8px rgba(255,255,255,0.5), 1px 1px 0 #000;
+                    line-height: 1;
+                }
+                .livecam-timecode {
+                    font-family: 'Courier New', monospace;
+                    font-size: 10px;
+                    color: rgba(255,255,255,0.55);
+                    letter-spacing: 1px;
+                    text-shadow: 1px 1px 0 #000;
+                    line-height: 1;
+                    margin-left: 4px;
+                }
+
+                /* ── Vignette ────────────────────────────────────── */
+                .pacman-vignette {
+                    position: absolute;
+                    inset: 0;
+                    background: radial-gradient(ellipse at center,
+                        transparent 55%, rgba(0,0,0,0.45) 100%);
+                    pointer-events: none;
+                    z-index: 14;
+                    opacity: 0;
+                    transition: opacity 0.6s ease;
+                }
+                .pacman-vignette.visible { opacity: 1; }
+
                 /* ── Shared overlay backdrop ─────────────────────── */
                 .pacman-overlay {
                     position: absolute;
@@ -330,6 +407,27 @@ export class Pacman extends Component
         this._fright_bar_wrap.innerHTML = `<div class="pacman-fright-bar" id="fright-bar-fill"></div>`;
         container.appendChild(this._fright_bar_wrap);
 
+        // ── Cinematic letterbox bars ──────────────────────────────────────────
+        this._cine_bar_top    = document.createElement('div');
+        this._cine_bar_bottom = document.createElement('div');
+        this._cine_bar_top.className    = 'pacman-cinematic-bar top';
+        this._cine_bar_bottom.className = 'pacman-cinematic-bar bottom';
+        container.appendChild(this._cine_bar_top);
+        container.appendChild(this._cine_bar_bottom);
+
+        // ── LIVE CAM badge ────────────────────────────────────────────────────
+        this._livecam_el = document.createElement('div');
+        this._livecam_el.className = 'pacman-livecam';
+        this._livecam_el.innerHTML = `
+            <div class="livecam-dot"></div>
+            <span class="livecam-text">CINEMATIC CAM</span>
+            <span class="livecam-timecode" id="livecam-tc">00:00:00</span>
+        `;
+        container.appendChild(this._livecam_el);
+
+        // Tracks when cinematic mode started for the timecode counter
+        this._cine_start_t = null;
+
         // ── Game Over overlay ─────────────────────────────────────────────────
         this._gameover_el = document.createElement('div');
         this._gameover_el.className = 'pacman-overlay';
@@ -407,6 +505,29 @@ export class Pacman extends Component
             }
         }
 
+        // ── Cinematic mode UI ─────────────────────────────────────────────────
+        const cine = this.autopilot_on;
+
+        if (this._cine_bar_top) {
+            this._cine_bar_top.classList.toggle('active', cine);
+            this._cine_bar_bottom.classList.toggle('active', cine);
+        }
+        if (this._livecam_el)  this._livecam_el.classList.toggle('visible', cine);
+        if (this._vignette_el) this._vignette_el.classList.toggle('visible', cine);
+
+        // Timecode — counts up from 00:00:00, resets when cinematic is toggled off
+        if (cine) {
+            if (this._cine_start_t === null) this._cine_start_t = performance.now();
+            const elapsed = Math.floor((performance.now() - this._cine_start_t) / 1000);
+            const hh = String(Math.floor(elapsed / 3600)).padStart(2, '0');
+            const mm = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
+            const ss = String(elapsed % 60).padStart(2, '0');
+            const tc = document.getElementById('livecam-tc');
+            if (tc) tc.textContent = `${hh}:${mm}:${ss}`;
+        } else {
+            this._cine_start_t = null;
+        }
+
         // Game Over overlay
         if (this.game_over && this._gameover_el) {
             const el = document.getElementById('gameover-score-val');
@@ -454,12 +575,29 @@ export class Pacman extends Component
         this.last_t = t;
 
         // ── Camera ────────────────────────────────────────────────────────────
-        this.camera.apply(dt, this.player, this.uniforms, caller);
+        this.camera.apply(dt, this.player, this.uniforms, caller, {
+            player_x:          this.player.x,
+            player_z:          this.player.z,
+            player_dx:         this.player.last_dir_x,
+            player_dz:         this.player.last_dir_z,
+            ghosts:            this.ghosts,
+            frightened_timer:  this.frightened_timer,
+            lives:             this.lives,
+            pellets_remaining: this.pellets.filter(p => !p.eaten).length,
+        });
 
         // ── Game logic (skip when paused or game is over) ─────────────────────
         if (this.uniforms.animate && !this.game_won && !this.game_over)
         {
-            // Move player
+            // Compute autopilot decision if it's update time
+            if (this.autopilot_on) {
+                this.autopilot.update(
+                    dt, this.player, this.ghosts,
+                    this.pellets, this.power_pellets,
+                    this.frightened_timer
+                );
+            }
+            // Move player in direction
             this.player.update(dt);
 
             // Pellet collection

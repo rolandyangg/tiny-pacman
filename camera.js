@@ -1,27 +1,50 @@
 import {tiny} from './examples/common.js';
+import {Director} from './pacman-director.js';
 
 const { vec3, Mat4, Shader } = tiny;
 
 export class CameraController {
     constructor() {
+        this._director = new Director();
         this.reset();
     }
 
     reset() {
-        this.mode           = 'top_down'; //top_down, first_person, third_person
+        this.mode           = 'top_down';  // 'top_down' | 'first_person' | 'third_person' | 'cinematic'
+        this._prev_mode     = 'top_down';
+
+        // Shared smoothed look direction (reused by first + third person)
         this.cam_look_x     = 0;
-        this.cam_look_z     = -1; // default looking down for top down
+        this.cam_look_z     = -1;
+
+        // Third-person smoothed camera world position
         this.cam_third_x    = 0;
         this.cam_third_z    = 0;
-        this.follow_dist    = 3.5; // third person default follow dist
+
+        // Third-person follow distance
+        this.follow_dist    = 3.5;
+
+        this._director.reset();
+    }
+
+    // Toggle cinematic camera
+    toggle_cinematic() {
+        if (this.mode === 'cinematic') {
+            this.mode = this._prev_mode;
+        } else {
+            this._prev_mode = this.mode;
+            this.mode = 'cinematic';
+        }
     }
 
     // camera logic, applies after every delta t
-    apply(dt, player, uniforms, caller) {
+    apply(dt, player, uniforms, caller, game_state) {
         if (this.mode === 'first_person') {
             this._apply_first_person(dt, player, uniforms, caller);
         } else if (this.mode === 'third_person') {
             this._apply_third_person(dt, player, uniforms, caller);
+        } else if (this.mode === 'cinematic' && game_state) {
+            this._apply_cinematic(dt, game_state, uniforms, caller);
         } else {
             this._apply_top_down(uniforms, caller);
         }
@@ -86,5 +109,16 @@ export class CameraController {
         );
         uniforms.projection_transform =
             Mat4.perspective(Math.PI / 4, caller.width / caller.height, 1, 200);
+    }
+
+    _apply_cinematic(dt, game_state, uniforms, caller) {
+        const FOV = Math.PI / 4;
+
+        const {eye, at} = this._director.update(dt, game_state);
+        if (!eye || !at) return this._apply_top_down(uniforms, caller);
+
+        Shader.assign_camera(Mat4.look_at(eye, at, vec3(0, 1, 0)), uniforms);
+        uniforms.projection_transform =
+            Mat4.perspective(FOV, caller.width / caller.height, 0.1, 200);
     }
 }
