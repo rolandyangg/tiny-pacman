@@ -40,7 +40,7 @@ As required, our project uses **at least four** computer animation algorithms th
 Collision is used for core gameplay and is implemented in two ways:
 
 - **Sphere–sphere (or radius-based) collision:** Pac-Man collects a pellet or power pellet when the distance between their centers is below `COLLECT_RADIUS`. Ghost–player collision uses a similar threshold (`GHOST_COLLIDE_RADIUS`): if the distance is below it and ghosts are not frightened, the player loses a life (and ghosts/player respawn); if frightened, the ghost is eaten and the player gains points.
-- **Tile/wall collision:** The maze is a grid. The player and ghosts use `world_to_tile` to get tile coordinates and `is_wall(col, row)` to test adjacent tiles. Movement is constrained so entities never enter wall tiles; turns and direction changes are validated against the grid so motion stays on the path and feels correct.
+- **Tile/wall collision:** The maze is a grid. The player and ghosts use `world_to_tile` to get tile coordinates and `is_wall(col, row)` to test adjacent tiles. Movement is constrained so entities never enter wall tiles; turns and direction changes are validated against the grid so motion stays on the path and feels correct. For Pac-Man specifically, wall contact uses a penalty-based response inspired by Assignment 3's penalty-spring collision: when a blocked tile is detected ahead, Pac-Man overshoots the tile center, strikes the wall face, and is reflected back toward the center with a damped restitution coefficient (BOUNCE_RESTITUTION = 0.55), coming to rest at the tile center.
 
 No third-party physics libraries are used; all checks are done in the game logic.
 
