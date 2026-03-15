@@ -1,377 +1,390 @@
 import {tiny} from './examples/common.js';
-import {is_wall, world_to_tile} from './pacman-player.js';
-import {MAZE_COLS, MAZE_ROWS, get_tile_center_world} from './pacman-map.js';
+import {world_to_tile} from './pacman-player.js';
 import {CatmullRomSpline} from './spline.js';
 
 const { vec3 } = tiny;
 
-// Director config
+// ── Config ────────────────────────────────────────────────────────────────────
 const DCFG = {
-    // Timing parameters
+    // How long each shot is held before the director considers a new one
     MIN_HOLD:           3.5,
     MAX_HOLD:           7.0,
 
-    // Ghost action parameters
-    DRAMA_GHOST_RADIUS: 4,
-    DRAMA_HOLD:         2.5,
-
-    // Scoring parameters
-    REPEAT_PENALTY:     30,
-    TIEBREAK_SCALE:     10,
-
-    // Camera offset parameters
-    POSITIONAL_HEIGHT:        8.0,
-    POSITIONAL_DIST:          6.0,
-    POSITIONAL_SIDE_OFFSET:   4.0,
-
-    // Reaction event parameters 1
-    REACTION_HEIGHT:          3.0,
-    REACTION_DIST:            1.5,
-
-    // Reaction event parameters 2
-    STRATEGIC_HEIGHT:         12.0,
-    STRATEGIC_DIST:           5.0,
-
-    // First person camera parameters
-    FP_EYE_HEIGHT:            0.55,
-    FP_LOOK_DIST:             1.0,
-
-    // Third person camera parameters
-    TP_HEIGHT:                5.0,
-    TP_FOLLOW_DIST:           3.5,
-
-    // Ghost chase camera parameters
-    GHOST_CHASE_HEIGHT:       3.5,
-    GHOST_CHASE_FOLLOW_DIST:  2.5,
-    GHOST_CHASE_RADIUS:       3,
-
-    // Turning smoothing
+    // How quickly the internal facing direction catches up to Pac-Man's actual direction
     DIR_SMOOTHING:      5.0,
 
-    // Spline arc parameters
-    DRAMATIC_SWING:           2.5,
-    DRAMATIC_LIFT:            1.8,
+    // How quickly the camera eye position lerps toward its target each frame
+    EYE_SMOOTHING:      6.0,
 
-    // Overhead camera parameters
-    OVERHEAD_ENTRY_THRESHOLD: 15.0,
+    FOLLOW_HEIGHT:      8.0,
+    FOLLOW_DIST:        6.0,
+    FOLLOW_SIDE_OFFSET: 4.0,
 
-    // Min camera parameters
+    FP_EYE_HEIGHT:      0.55,
+    FP_LOOK_DIST:       1.0,
+
+    CLOSE_FOLLOW_HEIGHT: 5.0,
+    CLOSE_FOLLOW_DIST:   3.5,
+
+    OVERHEAD_HEIGHT:    12.0,
+
+    NEAR_GHOST_HEIGHT:  3.0,
+    NEAR_GHOST_DIST:    1.5,
+
+    GHOST_APPROACH_HEIGHT: 3.5,
+    GHOST_APPROACH_DIST:   2.5,
+
+    // ── Event detection ───────────────────────────────────────────────
+
+    // Tile distance at which a ghost triggers a GHOST_APPROACH cut
+    APPROACH_CUT_RADIUS:  3,
+
+    // Tile distance at which a ghost triggers a NEAR_GHOST cut
+    TENSION_CUT_RADIUS:   4,
+
+    // How long to hold a shot after an event-triggered cut
+    EVENT_HOLD:           2.5,
+
+    // ── Spline arc ────────────────────────────────────────────────────────────
+
+    // Lateral and vertical offset of the CR phantom endpoints (P0, P3)
+    ARC_SWING:          2.5,
+    ARC_LIFT:           1.8,
+    OVERHEAD_ENTRY_Y:   15.0,
+
+    // min floor for all eye positions
     MIN_EYE_HEIGHT:     4.5,
-    MIN_SWEEP_HEIGHT:   4.0,
-
-    // Spline wall validation
-    SPLINE_VALIDATE_STEPS: 10,
-    SPLINE_MAX_RETRIES:    3,
-
-    // Shot cutoffs
-    MIN_CUT_DISTANCE:   5.0,
-    PROXIMITY_PENALTY:  60,
-
-    // Line of sight parameters
-    LOS_STEPS:          12,
-    LOS_PENALTY:        45,
 };
 
-// Junction cache
-// (get junctions from maze, to act as first camera position)
-let _junction_cache = null;
-function get_junctions() {
-    if (_junction_cache) return _junction_cache;
-    _junction_cache = [];
-    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
-    for (let row = 1; row < MAZE_ROWS - 1; row++) {
-        for (let col = 1; col < MAZE_COLS - 1; col++) {
-            if (is_wall(col, row)) continue;
-            const open = dirs.filter(([dx,dz]) => !is_wall(col+dx, row+dz)).length;
-            if (open >= 3) _junction_cache.push([col, row]);
-        }
-    }
-    return _junction_cache;
-}
-
-// Shot type identifiers
-// (If anyone wants you can define more shots here that the director can use based on scores)
+// ── Shot type identifiers ─────────────────────────────────────────────────────
 const SHOT = {
-    POSITIONAL_BEHIND: 'positional_behind',
-    POSITIONAL_SIDE:   'positional_side',
-    REACTION:          'reaction',
-    STRATEGIC:         'strategic',
-    FIRST_PERSON:      'first_person',
-    THIRD_PERSON:      'third_person',
-    GHOST_CHASE:       'ghost_chase',
+    FOLLOW_BEHIND:   'follow_behind',    // elevated trailing behind Pac-Man
+    FOLLOW_SIDE:     'follow_side',      // elevated flanking Pac-Man to one side
+    FIRST_PERSON:    'first_person',     // at pac man's eye level looking ahead
+    CLOSE_FOLLOW:    'close_follow',     // low and close behind shoulder cam
+    OVERHEAD:        'overhead',         // directly above pac man looking straight down
+    NEAR_GHOST:      'near_ghost',       // camera near a ghost looking at Pac-man
+    GHOST_APPROACH:  'ghost_approach',   // behind a ghost as it closes in on Pac-man
 };
 
-const CR_SHOTS = new Set([SHOT.GHOST_CHASE, SHOT.REACTION]);
+// Define which shots transition via CR spline
+const SPLINE_SHOTS = new Set([SHOT.GHOST_APPROACH, SHOT.NEAR_GHOST]);
 
-// Normal vector helper
+// ── Math helpers ──────────────────────────────────────────────────────────────
+// normalized direction vector
 function norm2(dx, dz) {
     const len = Math.sqrt(dx*dx + dz*dz) || 1;
     return [dx/len, dz/len];
 }
 
-// Perpendicular vector helper
+// vector perpendicular to (dx, dz)
 function perp(dx, dz) { return [-dz, dx]; }
 
-// Y clamp helper (so it doesnt clip through the floor)
+// Clamps a vec3's Y component to a minimum value
 function clamp_y(v, min_y) {
     return v[1] < min_y ? vec3(v[0], min_y, v[2]) : v;
 }
 
-// Function to determine if the camera can see pacman
-// penalizes shot scores if pacman is obfuscated
-function has_line_of_sight(eye_x, eye_z, player_x, player_z) {
-    for (let i = 1; i <= DCFG.LOS_STEPS; i++) {
-        const t  = i / DCFG.LOS_STEPS;
-        const wx = eye_x + (player_x - eye_x) * t;
-        const wz = eye_z + (player_z - eye_z) * t;
-        const [col, row] = world_to_tile(wx, wz);
-        if (is_wall(col, row)) return false;
-    }
-    return true;
-}
-
-// Validates if the spline passes through a legal path
-// (If not in a wall or through the floor)
-function spline_is_clear(spline) {
-    for (let i = 0; i <= DCFG.SPLINE_VALIDATE_STEPS; i++) {
-        const pos = spline.compute_position(i / DCFG.SPLINE_VALIDATE_STEPS);
-        const [col, row] = world_to_tile(pos[0], pos[2]);
-        if (is_wall(col, row)) return false;
-    }
-    return true;
-}
-
-// Lift shot spline builder
-function build_straight_lift_spline(P1, P2, lift) {
-    const spline = new CatmullRomSpline();
-    spline.add_point(clamp_y(P1.plus(vec3(0, lift, 0)),       DCFG.MIN_SWEEP_HEIGHT));
-    spline.add_point(P1);
-    spline.add_point(P2);
-    spline.add_point(clamp_y(P2.plus(vec3(0, lift * 0.5, 0)), DCFG.MIN_SWEEP_HEIGHT));
-    return spline;
-}
-
-// Director class
+// ── Director ──────────────────────────────────────────────────────────────────
+// Decides which camera shot to show and when to switch.
+// Each frame it checks for events (ghost nearby, life lost)
+// immediate cut, or CR spline to the new position on change
 export class Director {
-    constructor() {
-        this.reset();
-        get_junctions();
-    }
+    constructor() { this.reset(); }
 
     reset() {
-        this._hold_timer    = 0;
-        this._hold_duration = 0;
-        this._last_type     = null;
-        this._spline        = null;
-        this._ride_t        = 0;
-        this._fixed_eye     = null;
-        this._current_at    = null;
-        this._prev_lives    = null;
-        this._drama_hold    = 0;
-        this._last_eye      = vec3(0, 50, 0);
+        this._hold_timer  = 0;          // time remaining on the current shot
+        this._last_type   = null;       // shot type currently being shown
 
-        this._smooth_dx     = 0;
-        this._smooth_dz     = -1;
+        // CR spline config
+        this._spline      = null;
+        this._ride_t      = 0;
+
+        this._fixed_eye   = null;       // eye position for non-spline shots (updated each frame)
+        this._at          = null;       // where the camera is looking
+
+        this._event_hold  = 0;          // suppresses re-triggering after an event cut
+        this._prev_lives  = null;       // used to detect when a life is lost
+
+        this._last_eye    = vec3(0, 50, 0);     // eye target (used for spline P1)
+        this._current_eye = vec3(0, 50, 0);     // actual eye position after lerping
+
+        // (dx,dy) to smooth camera and avoid snapping whenever he turns a corner
+        this._smooth_dx   = 0;
+        this._smooth_dz   = -1;
+
+        this._side_sign   = 1;
+        this._nearest     = null;
     }
 
     update(dt, game_state) {
-        // Update time of this shot
         this._hold_timer -= dt;
-        this._drama_hold -= dt;
+        this._event_hold -= dt;
 
-        // Smooth the facing direction
-        const fdx = game_state.player_dx || 0;
-        const fdz = game_state.player_dz || -1;
-        const k   = DCFG.DIR_SMOOTHING * dt;
-        this._smooth_dx += (fdx - this._smooth_dx) * k;
-        this._smooth_dz += (fdz - this._smooth_dz) * k;
+        // 1. smooth the facing direction toward player direction.
+        const raw_dx = game_state.player_dx || 0;
+        const raw_dz = game_state.player_dz || -1;
+        const k      = DCFG.DIR_SMOOTHING * dt;
+        this._smooth_dx += (raw_dx - this._smooth_dx) * k;
+        this._smooth_dz += (raw_dz - this._smooth_dz) * k;
 
-        // Check for points of interest (drama)
-        const drama      = this._check_drama(game_state);
+        // cache the nearest active ghost (performance opt, avoid rescanning)
+        this._nearest = this._find_nearest_ghost(game_state);
+
+        // 2. update camera dir if fixed eye so it's pointing toward pacman
+        this._update_fixed_eye(game_state);
+
+        // 3. Check game events, decide if a cut should occur
+        const event = this._check_events(game_state);
+        // if theres an event, or the hold timer is finished, or we're not mid shot
         const should_cut =
-            drama !== null        ||
+            event !== null ||
             this._hold_timer <= 0 ||
-            (this._spline === null && this._fixed_eye === null);
+            (!this._spline && !this._fixed_eye);
 
         if (should_cut) {
-            // Cut if there's a more interesting shot occuring
-            this._cut(game_state, drama?.preferred_type ?? null, drama?.hold_override ?? null);
+            // DFCG overrides for hold duration, and shot preferences
+            const preferred = event?.preferred_type ?? null;
+            const hold      = event?.hold_override  ?? null;
+            this._cut(game_state, preferred, hold);
         }
 
-        // Resolve eye
-        let eye;
+        // 4: if on spline, compute raw target eye position
+        let target_eye;
         if (this._spline) {
-            if (this._hold_duration > 0) {
-                this._ride_t = Math.min(1, 1 - (this._hold_timer / this._hold_duration));
-            }
-            eye = this._spline.compute_position(this._ride_t);
+            // spline is paced so we finish mid hold
+            const avg_hold = (DCFG.MIN_HOLD + DCFG.MAX_HOLD) * 0.5;
+            this._ride_t   = Math.min(1, this._ride_t + dt / avg_hold);
+            target_eye     = this._spline.compute_position(this._ride_t);
         } else {
-            // Recompute eye when pacman turns
-            eye = this._compute_fixed_eye(game_state);
+            // update with fixed eye direction (toward pacman)
+            target_eye = this._fixed_eye ?? this._last_eye;
         }
 
-        if (eye[1] < DCFG.MIN_EYE_HEIGHT) eye = vec3(eye[0], DCFG.MIN_EYE_HEIGHT, eye[2]);
-        this._last_eye = eye;
+        // clamp to min height if we're somehow below it
+        if (target_eye[1] < DCFG.MIN_EYE_HEIGHT) {
+            target_eye = vec3(target_eye[0], DCFG.MIN_EYE_HEIGHT, target_eye[2]);
+        }
 
-        // First person camera shot
+        // 5: lerp the camera eye toward the target.
+        // (so it softens turns since pacman snaps to 90 deg directions)
+        const lerp_k = Math.min(1, DCFG.EYE_SMOOTHING * dt);
+        this._current_eye = vec3(
+            this._current_eye[0] + (target_eye[0] - this._current_eye[0]) * lerp_k,
+            this._current_eye[1] + (target_eye[1] - this._current_eye[1]) * lerp_k,
+            this._current_eye[2] + (target_eye[2] - this._current_eye[2]) * lerp_k,
+        );
+
+        // _last_eye stores the un-lerped target so spline P1 is always accurate
+        this._last_eye = target_eye;
+
+        // 6: compute the look-at point
         if (this._last_type === SHOT.FIRST_PERSON) {
-            this._current_at = vec3(
+            // use smoothed facing direction for first person
+            this._at = vec3(
                 game_state.player_x + this._smooth_dx * DCFG.FP_LOOK_DIST,
                 DCFG.FP_EYE_HEIGHT,
                 game_state.player_z + this._smooth_dz * DCFG.FP_LOOK_DIST
             );
         } else {
-            this._current_at = vec3(game_state.player_x, 0.35, game_state.player_z);
+            // look to bottom of pacman otherwise
+            this._at = vec3(game_state.player_x, 0.35, game_state.player_z);
         }
 
-        return { eye, at: this._current_at };
+        return { eye: this._current_eye, at: this._at };
     }
 
-    // Fixed eye compute helper
-    _compute_fixed_eye(gs) {
-        if (this._last_type === null) return this._last_eye;
+    // ── Fixed eye update ──────────────────────────────────────────────────────
+    // For shots that don't ride a spline
+    // using the current smoothed facing direction and Pac-Man's position
+    _update_fixed_eye(gs) {
+        if (!this._fixed_eye || !this._last_type) return;
 
-        const px  = gs.player_x;
-        const pz  = gs.player_z;
-        const fdx = this._smooth_dx;
-        const fdz = this._smooth_dz;
-        const [sx, sz] = perp(fdx, fdz);
+        const px         = gs.player_x;
+        const pz         = gs.player_z;
+        const fdx        = this._smooth_dx;
+        const fdz        = this._smooth_dz;
+        const [sx, sz]   = perp(fdx, fdz);
 
         switch (this._last_type) {
-            case SHOT.POSITIONAL_BEHIND:
-                return clamp_y(
-                    vec3(px - fdx * DCFG.POSITIONAL_DIST, DCFG.POSITIONAL_HEIGHT, pz - fdz * DCFG.POSITIONAL_DIST),
-                    DCFG.MIN_EYE_HEIGHT
+            case SHOT.FOLLOW_BEHIND:
+                this._fixed_eye = vec3(
+                    px - fdx * DCFG.FOLLOW_DIST,
+                    DCFG.FOLLOW_HEIGHT,
+                    pz - fdz * DCFG.FOLLOW_DIST
                 );
+                break;
 
-            case SHOT.POSITIONAL_SIDE:
-                // Preserve which side was originally chosen
-                return clamp_y(
-                    vec3(px + sx * this._fixed_side_sign * DCFG.POSITIONAL_SIDE_OFFSET, DCFG.POSITIONAL_HEIGHT, pz + sz * this._fixed_side_sign * DCFG.POSITIONAL_SIDE_OFFSET),
-                    DCFG.MIN_EYE_HEIGHT
+            case SHOT.FOLLOW_SIDE:
+                // _side_sign is locked at cut time so the camera stays on the
+                // same side for the duration of the shot even as Pac-Man turns
+                this._fixed_eye = vec3(
+                    px + sx * this._side_sign * DCFG.FOLLOW_SIDE_OFFSET,
+                    DCFG.FOLLOW_HEIGHT,
+                    pz + sz * this._side_sign * DCFG.FOLLOW_SIDE_OFFSET
                 );
+                break;
+
+            case SHOT.CLOSE_FOLLOW:
+                this._fixed_eye = vec3(
+                    px - fdx * DCFG.CLOSE_FOLLOW_DIST,
+                    DCFG.CLOSE_FOLLOW_HEIGHT,
+                    pz - fdz * DCFG.CLOSE_FOLLOW_DIST
+                );
+                break;
 
             case SHOT.FIRST_PERSON:
-                return vec3(px, DCFG.FP_EYE_HEIGHT, pz);
-
-            case SHOT.THIRD_PERSON:
-                return clamp_y(
-                    vec3(px - fdx * DCFG.TP_FOLLOW_DIST, DCFG.TP_HEIGHT, pz - fdz * DCFG.TP_FOLLOW_DIST),
-                    DCFG.MIN_EYE_HEIGHT
-                );
-
-            case SHOT.STRATEGIC:
-                // Strategic shots are fixed
-                return this._fixed_eye ?? this._last_eye;
-
-            default:
-                return this._fixed_eye ?? this._last_eye;
+                this._fixed_eye = vec3(px, DCFG.FP_EYE_HEIGHT, pz);
+                break;
         }
     }
 
-    // Drama helpers
-    // Score each potential candidate shot base on what's happening in the scene
-    _check_drama(gs) {
-        const [pc, pr] = world_to_tile(gs.player_x, gs.player_z);
-        for (const g of gs.ghosts) {
-            if (g.in_house || g.eaten || gs.frightened_timer > 0) continue;
-            const [gc, gr] = world_to_tile(g.x, g.z);
-            const d = Math.abs(gc - pc) + Math.abs(gr - pr);
-            if (d <= DCFG.GHOST_CHASE_RADIUS && this._drama_hold <= 0)
-                // If a ghost is nearby and likely to be chased, switch to ghost_chase cam
-                return { preferred_type: SHOT.GHOST_CHASE, hold_override: DCFG.DRAMA_HOLD };
-            if (d <= DCFG.DRAMA_GHOST_RADIUS && this._drama_hold <= 0)
-                // Otherwise use reaction cam
-                return { preferred_type: SHOT.REACTION,    hold_override: DCFG.DRAMA_HOLD };
+    // ── Event detection ───────────────────────────────────────────────────────
+    // Checks whether anything happening in the game right now warrants a new shot
+    _check_events(gs) {
+        if (this._event_hold > 0) return null;
+
+        const [pac_col, pac_row] = world_to_tile(gs.player_x, gs.player_z);
+
+        for (const ghost of gs.ghosts) {
+            if (ghost.in_house || ghost.eaten || gs.frightened_timer > 0) continue;
+
+            const [ghost_col, ghost_row] = world_to_tile(ghost.x, ghost.z);
+            const tile_dist = Math.abs(ghost_col - pac_col) + Math.abs(ghost_row - pac_row);
+
+            if (tile_dist <= DCFG.APPROACH_CUT_RADIUS) {
+                //event 1: Ghost is close, cut to a camera trailing behind it
+                return { preferred_type: SHOT.GHOST_APPROACH, hold_override: DCFG.EVENT_HOLD };
+            }
+            if (tile_dist <= DCFG.TENSION_CUT_RADIUS) {
+                //event 2: Ghost is nearby, cut to a camera near the ghost looking at Pac-Man
+                return { preferred_type: SHOT.NEAR_GHOST, hold_override: DCFG.EVENT_HOLD };
+            }
         }
+
+        // event 3: Life just lost, cut to overhead to show the full board
         if (this._prev_lives !== null && gs.lives < this._prev_lives) {
             this._prev_lives = gs.lives;
-            // Switch to strategic shot if pacman just died
-            return { preferred_type: SHOT.STRATEGIC, hold_override: DCFG.DRAMA_HOLD * 2 };
+            return { preferred_type: SHOT.OVERHEAD, hold_override: DCFG.EVENT_HOLD * 2 };
         }
+
         this._prev_lives = gs.lives;
         return null;
     }
 
-    // Cut the shot if a candidate shot is more interesting
+    // ── Cut ───────────────────────────────────────────────────────────────────
+    // Switch to new shot
     _cut(gs, preferred_type, hold_override) {
-        const candidates = this._build_candidates(gs);
-        if (candidates.length === 0) return;
+        const type     = preferred_type ?? this._random_shot(gs);
+        this._last_type = type;
 
-        const scored = candidates
-            .map(c => ({ ...c, score: this._score(c, gs, preferred_type) }))
-            .sort((a, b) => b.score - a.score);
+        const px       = gs.player_x;
+        const pz       = gs.player_z;
+        const fdx      = this._smooth_dx;
+        const fdz      = this._smooth_dz;
+        const [sx, sz] = perp(fdx, fdz);
+        const ghost    = this._nearest;
 
-        const chosen    = scored[0];
-        this._last_type = chosen.type;
+        // Compute the target eye for this shot
+        let target_eye;
+        switch (type) {
+            case SHOT.FOLLOW_BEHIND:
+                target_eye = vec3(px - fdx * DCFG.FOLLOW_DIST, DCFG.FOLLOW_HEIGHT, pz - fdz * DCFG.FOLLOW_DIST);
+                break;
 
-        // Remember which side was picked for POSITIONAL_SIDE so _compute_fixed_eye
-        // can reconstruct the correct position each frame.
-        if (chosen.type === SHOT.POSITIONAL_SIDE) {
-            this._fixed_side_sign = chosen._side_sign ?? 1;
+            case SHOT.FOLLOW_SIDE:
+                // Pick a side randomly and remember it for _update_fixed_eye
+                this._side_sign = Math.random() < 0.5 ? 1 : -1;
+                target_eye = vec3(
+                    px + sx * this._side_sign * DCFG.FOLLOW_SIDE_OFFSET,
+                    DCFG.FOLLOW_HEIGHT,
+                    pz + sz * this._side_sign * DCFG.FOLLOW_SIDE_OFFSET
+                );
+                break;
+
+            case SHOT.FIRST_PERSON:
+                target_eye = vec3(px, DCFG.FP_EYE_HEIGHT, pz);
+                break;
+
+            case SHOT.CLOSE_FOLLOW:
+                target_eye = vec3(px - fdx * DCFG.CLOSE_FOLLOW_DIST, DCFG.CLOSE_FOLLOW_HEIGHT, pz - fdz * DCFG.CLOSE_FOLLOW_DIST);
+                break;
+
+            case SHOT.OVERHEAD:
+                target_eye = vec3(px, DCFG.OVERHEAD_HEIGHT, pz);
+                break;
+
+            case SHOT.NEAR_GHOST: {
+                // camera just behind the ghost, pointed toward Pac-Man
+                if (!ghost) { target_eye = vec3(px, DCFG.FOLLOW_HEIGHT, pz); break; }
+                const [ndx, ndz] = norm2(px - ghost.x, pz - ghost.z);
+                target_eye = vec3(
+                    ghost.x - ndx * DCFG.NEAR_GHOST_DIST,
+                    DCFG.NEAR_GHOST_HEIGHT,
+                    ghost.z - ndz * DCFG.NEAR_GHOST_DIST
+                );
+                break;
+            }
+
+            case SHOT.GHOST_APPROACH: {
+                // Trail behind the ghost along the vector from ghost toward Pac-Man
+                if (!ghost) { target_eye = vec3(px, DCFG.FOLLOW_HEIGHT, pz); break; }
+                const [ndx, ndz] = norm2(px - ghost.x, pz - ghost.z);
+                target_eye = vec3(
+                    ghost.x - ndx * DCFG.GHOST_APPROACH_DIST,
+                    DCFG.GHOST_APPROACH_HEIGHT,
+                    ghost.z - ndz * DCFG.GHOST_APPROACH_DIST
+                );
+                break;
+            }
+
+            default:
+                target_eye = vec3(px, DCFG.FOLLOW_HEIGHT, pz);
         }
 
-        const departing_from_overhead = this._last_eye[1] >= DCFG.OVERHEAD_ENTRY_THRESHOLD;
-
-        if (CR_SHOTS.has(chosen.type) || departing_from_overhead) {
-            this._spline    = this._build_spline_validated(chosen, gs, departing_from_overhead);
+        // Decide whether to spline or snap
+        const entering_from_overhead = this._last_eye[1] >= DCFG.OVERHEAD_ENTRY_Y;
+        if (SPLINE_SHOTS.has(type) || entering_from_overhead) {
+            this._spline    = this._build_spline(target_eye, entering_from_overhead);
             this._ride_t    = 0;
             this._fixed_eye = null;
         } else {
-            // Store the snapped position for strategic / fallback use
-            this._fixed_eye = clamp_y(chosen.eye, DCFG.MIN_EYE_HEIGHT);
+            this._fixed_eye = clamp_y(target_eye, DCFG.MIN_EYE_HEIGHT);
             this._spline    = null;
         }
 
-        const base_hold     = DCFG.MIN_HOLD + Math.random() * (DCFG.MAX_HOLD - DCFG.MIN_HOLD);
-        this._hold_duration = hold_override ?? base_hold;
-        this._hold_timer    = this._hold_duration;
-        if (hold_override) this._drama_hold = hold_override;
-
-        if (chosen.at) this._current_at = chosen.at;
+        // Set hold duration
+        const random_hold = DCFG.MIN_HOLD + Math.random() * (DCFG.MAX_HOLD - DCFG.MIN_HOLD);
+        this._hold_timer  = hold_override ?? random_hold;
+        if (hold_override) this._event_hold = hold_override;
     }
 
-    // Validate CR spline helper
-    _build_spline_validated(shot, gs, force_dramatic = false) {
-        let swing = DCFG.DRAMATIC_SWING;
-        let lift  = DCFG.DRAMATIC_LIFT;
-        if (force_dramatic) { swing *= 1.5; lift *= 1.2; }
+    // ── Spline builder ────────────────────────────────────────────────────────
+    // Builds CR spline from the current eye position (P1) to the target (P2).
+    // P0 and P3 phantom endpoints offset by DFCG
+    _build_spline(target_eye, wide_arc = false) {
+        // Wide arc used on overhead entries for a more dramatic opening sweep
+        const swing = DCFG.ARC_SWING * (wide_arc ? 1.5 : 1.0);
+        const lift  = DCFG.ARC_LIFT  * (wide_arc ? 1.2 : 1.0);
 
-        for (let attempt = 0; attempt < DCFG.SPLINE_MAX_RETRIES; attempt++) {
-            const spline = this._build_spline(shot, gs, swing, lift);
-            if (spline_is_clear(spline)) return spline;
-            swing *= 0.5;
-            lift  *= 0.5;
-        }
-        return build_straight_lift_spline(this._last_eye, shot.eye, lift);
-    }
+        const [sx, sz] = perp(this._smooth_dx, this._smooth_dz);
 
-    // Generate CR spline
-    _build_spline(shot, gs, swing, lift) {
-        const spline = new CatmullRomSpline();
         const P1 = this._last_eye;
-        const P2 = shot.eye;
-        const px = gs.player_x;
-        const pz = gs.player_z;
+        const P2 = clamp_y(target_eye, DCFG.MIN_EYE_HEIGHT);
 
-        let P0, P3;
-        const g = shot.ghost;
-        if (g) {
-            // Spline version 1 (if ghost shot)
-            const [ndx, ndz] = norm2(px - g.x, pz - g.z);
-            P0 = P1.plus(vec3(-ndx * swing,        lift * 0.5, -ndz * swing));
-            P3 = P2.plus(vec3( ndx * swing * 0.4,  0,           ndz * swing * 0.4));
-        } else {
-            // Spline version 2 otherwise
-            const [sx, sz] = perp(this._smooth_dx, this._smooth_dz);
-            P0 = P1.plus(vec3( sx * swing,         lift,         sz * swing));
-            P3 = P2.plus(vec3(-sx * swing * 0.5,   lift * 0.3,  -sz * swing * 0.5));
-        }
+        // P0 offset
+        const P0 = clamp_y(
+            P1.plus(vec3(sx * swing, lift, sz * swing)),
+            DCFG.MIN_EYE_HEIGHT
+        );
 
-        // Clamp points so they don't pass through min height
-        P0 = clamp_y(P0, DCFG.MIN_SWEEP_HEIGHT);
-        P3 = clamp_y(P3, DCFG.MIN_SWEEP_HEIGHT);
+        // P3 offset
+        const P3 = clamp_y(
+            P2.plus(vec3(-sx * swing * 0.5, lift * 0.3, -sz * swing * 0.5)),
+            DCFG.MIN_EYE_HEIGHT
+        );
 
+        const spline = new CatmullRomSpline();
         spline.add_point(P0);
         spline.add_point(P1);
         spline.add_point(P2);
@@ -379,117 +392,41 @@ export class Director {
         return spline;
     }
 
-    // Aggregate shot candidates
-    _build_candidates(gs) {
-        const candidates = [];
-        const px  = gs.player_x;
-        const pz  = gs.player_z;
-        // Use smoothed direction for candidate generation so scoring and
-        // eye positions are consistent with what _compute_fixed_eye will produce
-        const fdx = this._smooth_dx;
-        const fdz = this._smooth_dz;
-        const [sx, sz] = perp(fdx, fdz);
+    // ── Shot selection ────────────────────────────────────────────────────────
+    // Pick a random shot from the available pool, except the curr one
+    _random_shot(gs) {
+        const has_active_ghosts = gs.ghosts.some(g => !g.in_house && !g.eaten);
 
-        candidates.push({
-            type: SHOT.POSITIONAL_BEHIND,
-            eye:  vec3(px - fdx * DCFG.POSITIONAL_DIST, DCFG.POSITIONAL_HEIGHT, pz - fdz * DCFG.POSITIONAL_DIST),
-        });
+        const pool = [
+            SHOT.FOLLOW_BEHIND,
+            SHOT.FOLLOW_SIDE,
+            SHOT.CLOSE_FOLLOW,
+            SHOT.FIRST_PERSON,
+            SHOT.OVERHEAD,
+        ];
 
-        for (const sign of [1, -1]) {
-            candidates.push({
-                type:       SHOT.POSITIONAL_SIDE,
-                eye:        vec3(px + sx*sign*DCFG.POSITIONAL_SIDE_OFFSET, DCFG.POSITIONAL_HEIGHT, pz + sz*sign*DCFG.POSITIONAL_SIDE_OFFSET),
-                _side_sign: sign,
-            });
+        if (has_active_ghosts) {
+            pool.push(SHOT.NEAR_GHOST);
+            pool.push(SHOT.GHOST_APPROACH);
         }
 
-        candidates.push({
-            type: SHOT.FIRST_PERSON,
-            eye:  vec3(px, DCFG.FP_EYE_HEIGHT, pz),
-            at:   vec3(px + fdx * DCFG.FP_LOOK_DIST, DCFG.FP_EYE_HEIGHT, pz + fdz * DCFG.FP_LOOK_DIST),
-        });
-
-        candidates.push({
-            type: SHOT.THIRD_PERSON,
-            eye:  vec3(px - fdx * DCFG.TP_FOLLOW_DIST, DCFG.TP_HEIGHT, pz - fdz * DCFG.TP_FOLLOW_DIST),
-        });
-
-        for (const g of gs.ghosts) {
-            if (g.in_house || g.eaten) continue;
-            const [ndx, ndz] = norm2(px - g.x, pz - g.z);
-            candidates.push({
-                type:  SHOT.REACTION,
-                eye:   vec3(g.x - ndx * DCFG.REACTION_DIST, DCFG.REACTION_HEIGHT, g.z - ndz * DCFG.REACTION_DIST),
-                ghost: g,
-            });
-            candidates.push({
-                type:  SHOT.GHOST_CHASE,
-                eye:   vec3(g.x - ndx * DCFG.GHOST_CHASE_FOLLOW_DIST, DCFG.GHOST_CHASE_HEIGHT, g.z - ndz * DCFG.GHOST_CHASE_FOLLOW_DIST),
-                ghost: g,
-            });
-        }
-
-        const [pc, pr] = world_to_tile(px, pz);
-        get_junctions()
-            .map(([jc, jr]) => ({ jc, jr, dist: Math.abs(jc-pc) + Math.abs(jr-pr) }))
-            .sort((a, b) => a.dist - b.dist)
-            .slice(0, 4)
-            .forEach(({jc, jr}) => {
-                const [jx, jz] = get_tile_center_world(jc, jr);
-                candidates.push({
-                    type: SHOT.STRATEGIC,
-                    eye:  vec3(jx + DCFG.STRATEGIC_DIST, DCFG.STRATEGIC_HEIGHT, jz + DCFG.STRATEGIC_DIST),
-                });
-            });
-
-        return candidates;
+        const options = pool.filter(type => type !== this._last_type);
+        return options[Math.floor(Math.random() * options.length)];
     }
 
-    // Compute score for each shot
-    _score(candidate, gs, preferred_type) {
-        let score = 0;
+    // Returns the active ghost closest to Pac-Man by Manhattan tile distance
+    _find_nearest_ghost(gs) {
+        const [pac_col, pac_row] = world_to_tile(gs.player_x, gs.player_z);
+        let nearest      = null;
+        let nearest_dist = Infinity;
 
-        if (preferred_type && candidate.type === preferred_type) score += 50;
-        if (candidate.type === this._last_type) score -= DCFG.REPEAT_PENALTY;
-
-        if (candidate.type === SHOT.REACTION || candidate.type === SHOT.GHOST_CHASE) {
-            const g = candidate.ghost;
-            if (g) {
-                const [gc, gr] = world_to_tile(g.x, g.z);
-                const [pc, pr] = world_to_tile(gs.player_x, gs.player_z);
-                score += Math.max(0, 20 - (Math.abs(gc-pc) + Math.abs(gr-pr))) * 2;
-            }
+        for (const ghost of gs.ghosts) {
+            if (ghost.in_house || ghost.eaten) continue;
+            const [gc, gr] = world_to_tile(ghost.x, ghost.z);
+            const dist     = Math.abs(gc - pac_col) + Math.abs(gr - pac_row);
+            if (dist < nearest_dist) { nearest_dist = dist; nearest = ghost; }
         }
 
-        if (candidate.type === SHOT.GHOST_CHASE && gs.frightened_timer <= 0) score += 15;
-
-        if (gs.frightened_timer <= 0) {
-            if (candidate.type === SHOT.FIRST_PERSON) score += 12;
-            if (candidate.type === SHOT.THIRD_PERSON) score += 10;
-        }
-        if (gs.frightened_timer > 0) {
-            if (candidate.type === SHOT.STRATEGIC)         score += 20;
-            if (candidate.type === SHOT.POSITIONAL_BEHIND) score += 8;
-        }
-
-        const dx   = candidate.eye[0] - gs.player_x;
-        const dz   = candidate.eye[2] - gs.player_z;
-        const dist = Math.sqrt(dx*dx + dz*dz);
-        if (dist >= 2 && dist <= 14) score += 15;
-
-        const cur = this._last_eye;
-        const cdx = candidate.eye[0] - cur[0];
-        const cdz = candidate.eye[2] - cur[2];
-        const cdy = candidate.eye[1] - cur[1];
-        if (Math.sqrt(cdx*cdx + cdz*cdz + cdy*cdy) < DCFG.MIN_CUT_DISTANCE) {
-            score -= DCFG.PROXIMITY_PENALTY;
-        }
-
-        if (!has_line_of_sight(candidate.eye[0], candidate.eye[2], gs.player_x, gs.player_z)) {
-            score -= DCFG.LOS_PENALTY;
-        }
-
-        score += Math.random() * DCFG.TIEBREAK_SCALE;
-        return score;
+        return nearest;
     }
 }
