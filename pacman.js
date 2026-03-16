@@ -351,6 +351,59 @@ export class Pacman extends Component
         }
     }
 
+    // ── Larger, brighter burst for power pellets at (x, z) ───────────────────
+    _spawn_power_pellet_particles(x, z) {
+        if (!this.particle_sim) return;
+
+        const count = 15;
+        const center_y = 0.45;
+        const life_secs = 3.0;
+
+        const particles = [];
+
+        for (let i = 0; i < count; i++) {
+            const p = new Particle();
+            p.mass = 0.7;
+            p.pos = vec3(x, center_y, z);
+
+            // Stronger outward + upward burst than regular pellets
+            const angle = Math.random() * 2 * Math.PI;
+            const speed_xy = 4.0 + Math.random() * 2.5;
+            const vx = Math.cos(angle) * speed_xy;
+            const vz = Math.sin(angle) * speed_xy;
+            const vy = 5.0 + Math.random() * 2.0;
+            p.vel = vec3(vx, vy, vz);
+
+            p.ext_force = vec3(0, 0, 0);
+            p.prev_pos = null;
+            p.valid = true;
+
+            p.life = 0;
+            p.max_life = life_secs;
+
+            // Make power pellet burst visually distinct: large, bright white
+            p.tint = color(1, 1, 1, 1);
+            p.size = 0.13;
+
+            this.particle_sim.particles.push(p);
+            particles.push(p);
+        }
+
+        // Connect in a looser ring for a big elastic bloom
+        for (let i = 0; i < count; i++) {
+            const p1 = particles[i];
+            const p2 = particles[(i + 1) % count];
+            const s = new Spring();
+            s.particle_1 = p1;
+            s.particle_2 = p2;
+            s.ks = 25;
+            s.kd = 2.5;
+            s.rest_length = 0.6;
+            s.valid = true;
+            this.particle_sim.springs.push(s);
+        }
+    }
+
     // ── Ghost eaten explosion at (x, z), tinted by ghost color ───────────────
     _spawn_ghost_eaten_particles(x, z, ghost_rgb) {
         if (!this.particle_sim) return;
@@ -491,6 +544,9 @@ export class Pacman extends Component
                         this.frightened_timer = FRIGHTENED_DURATION;
                         this.dots_eaten++;
                         this.last_dot_time = t;
+
+                        // Larger, more dramatic burst for power pellets
+                        this._spawn_power_pellet_particles(pellet.x, pellet.z);
                     }
                 }
             }
@@ -614,7 +670,7 @@ export class Pacman extends Component
             this.shapes.ghost.draw(caller, this.uniforms, ghost.get_transform(), mat);
         }
 
-        // ── Draw pellet / ghost particle effects ──────────────────────────────
+        // ── Draw pellet / power / ghost particle effects ──────────────────────
         if (this.particle_sim) {
             for (const p of this.particle_sim.particles) {
                 if (!p.valid) continue;
@@ -625,9 +681,12 @@ export class Pacman extends Component
                     alpha = Math.max(0, 1 - p.life / p.max_life);
                 }
 
-                // Ghost explosion particles (have tint) are drawn larger than pellet sparks.
+                // Base size: power pellets / ghost explosions can override via p.size;
+                // otherwise, tinted particles default larger than plain pellet sparks.
                 const base_color = p.tint || color(1, 1, 0, 1);
-                const scale = p.tint ? 0.13 : 0.08;
+                const scale = (p.size != null)
+                    ? p.size
+                    : (p.tint ? 0.13 : 0.08);
                 const transform = Mat4.translation(p.pos[0], p.pos[1], p.pos[2])
                     .times(Mat4.scale(scale, scale, scale));
 

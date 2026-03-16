@@ -28,6 +28,10 @@ class Particle {
     // Optional per-particle color tint (e.g. for ghost explosions).
     // If null, the renderer can fall back to a default material color.
     this.tint = null;
+
+    // Optional visual size override for this particle when rendering.
+    // If null, the renderer chooses a default size based on context.
+    this.size = null;
   }
 
   update(dt, integration_method) {
