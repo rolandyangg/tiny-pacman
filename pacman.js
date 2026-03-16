@@ -7,7 +7,7 @@ import {Ghost} from './pacman-ghosts.js';
 import {CameraController} from './camera.js';
 import {register_key_bindings} from './input.js';
 import {PacmanAutopilot} from './pacman-autopilot.js';
-import {ParticleSimulation} from './particle-springs.js';
+import {ParticleSimulation, Particle, Spring} from './particle-springs.js';
 
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
 
@@ -28,10 +28,11 @@ export class Pacman extends Component
     {
         // ── Shapes ────────────────────────────────────────────────────────────
         this.shapes = {
-            wall:   new defs.Cube(),
-            floor:  new defs.Cube(),
-            player: new defs.Subdivision_Sphere(3),
-            ghost:  new defs.Subdivision_Sphere(3),
+            wall:     new defs.Cube(),
+            floor:    new defs.Cube(),
+            player:   new defs.Subdivision_Sphere(3),
+            ghost:    new defs.Subdivision_Sphere(3),
+            particle: new defs.Subdivision_Sphere(2),
         };
 
         // ── Materials ─────────────────────────────────────────────────────────
@@ -47,6 +48,8 @@ export class Pacman extends Component
                 color: color(1, 0, 0, 1) },
             ghost_frightened: { shader: phong, ambient: 0.6, diffusivity: 0.8, specularity: 0.2,
                 color: color(0.2, 0.2, 1, 1) },
+            particle: { shader: phong, ambient: 0.7, diffusivity: 0.6, specularity: 0.2,
+                color: color(1, 1, 0, 1) },
         };
 
         // ── Camera ────────────────────────────────────────────────────────────
@@ -64,7 +67,7 @@ export class Pacman extends Component
         // ── Particle simulation (shares dt with game loop) ────────────────────
         this.particle_sim = new ParticleSimulation();
         this.particle_sim.g_acc = vec3(0, -9.8, 0);
-        this.particle_sim.integration_method = "euler";
+        this.particle_sim.integration_method = "verlet";
         this.particle_sim.valid = true;   // safe: no particles yet, update() becomes a no-op
 
         this._reset();
@@ -92,6 +95,12 @@ export class Pacman extends Component
 
         this.camera.reset();
         this.autopilot_on = false;
+
+        // Clear any existing particle effects
+        if (this.particle_sim) {
+            this.particle_sim.particles = [];
+            this.particle_sim.springs = [];
+        }
 
         // Hide overlays if they already exist
         if (this._gameover_el) this._gameover_el.classList.remove('visible');
@@ -292,6 +301,56 @@ export class Pacman extends Component
         }
     }
 
+    // ── Spawn a short-lived springy yellow particle burst at (x, z) ───────────
+    _spawn_pellet_particles(x, z) {
+        if (!this.particle_sim) return;
+
+        const count = 5;
+        const center_y = 0.4;   // a bit above the floor
+        const life_secs = 2.0;
+
+        const particles = [];
+
+        for (let i = 0; i < count; i++) {
+            const p = new Particle();
+            p.mass = 0.5;
+            p.pos = vec3(x, center_y, z);
+
+            // Random small outward + upward velocity
+            const angle = Math.random() * 2 * Math.PI;
+            const speed_xy = 2.0 + Math.random() * 1.5;
+            const vx = Math.cos(angle) * speed_xy;
+            const vz = Math.sin(angle) * speed_xy;
+            const vy = 3.5 + Math.random() * 1.0;
+            p.vel = vec3(vx, vy, vz);
+
+            p.ext_force = vec3(0, 0, 0);
+            p.prev_pos = null;
+            p.valid = true;
+
+            // Lifetime / fade info
+            p.life = 0;
+            p.max_life = life_secs;
+
+            this.particle_sim.particles.push(p);
+            particles.push(p);
+        }
+
+        // Connect them in a ring with springs so they bounce a bit together.
+        for (let i = 0; i < count; i++) {
+            const p1 = particles[i];
+            const p2 = particles[(i + 1) % count];
+            const s = new Spring();
+            s.particle_1 = p1;
+            s.particle_2 = p2;
+            s.ks = 30;      // stiffness
+            s.kd = 2;       // damping
+            s.rest_length = 0.4;
+            s.valid = true;
+            this.particle_sim.springs.push(s);
+        }
+    }
+
     // ── Controls / key bindings ───────────────────────────────────────────────
     render_controls()
     {
@@ -359,6 +418,9 @@ export class Pacman extends Component
                         this.score += PELLET_POINTS;
                         this.dots_eaten++;
                         this.last_dot_time = t;
+
+                        // Spawn a small spring-connected particle burst at this pellet
+                        this._spawn_pellet_particles(pellet.x, pellet.z);
                     }
                 }
             }
@@ -438,6 +500,22 @@ export class Pacman extends Component
             // ── Particle simulation step (shares same dt) ────────────────────
             if (this.particle_sim) {
                 this.particle_sim.update(dt);
+
+                // Update lifetimes and cull expired particles
+                for (const p of this.particle_sim.particles) {
+                    if (!p.valid || p.max_life <= 0) continue;
+                    p.life += dt;
+                    if (p.life >= p.max_life) {
+                        p.valid = false;
+                    }
+                }
+                // Optionally prune dead particles to keep arrays small
+                this.particle_sim.particles =
+                    this.particle_sim.particles.filter(p => p.valid);
+                this.particle_sim.springs =
+                    this.particle_sim.springs.filter(s => s.valid &&
+                        s.particle_1 && s.particle_2 &&
+                        s.particle_1.valid && s.particle_2.valid);
             }
         }
 
@@ -477,6 +555,25 @@ export class Pacman extends Component
                 ? this.materials.ghost_frightened
                 : { ...this.materials.ghost, color: color(...ghost.color) };
             this.shapes.ghost.draw(caller, this.uniforms, ghost.get_transform(), mat);
+        }
+
+        // ── Draw pellet particle effects ──────────────────────────────────────
+        if (this.particle_sim) {
+            for (const p of this.particle_sim.particles) {
+                if (!p.valid) continue;
+
+                // If this particle has a lifetime, fade alpha over its duration.
+                let alpha = 1;
+                if (p.max_life > 0) {
+                    alpha = Math.max(0, 1 - p.life / p.max_life);
+                }
+
+                const transform = Mat4.translation(p.pos[0], p.pos[1], p.pos[2])
+                    .times(Mat4.scale(0.09, 0.09, 0.09));
+                const mat = { ...this.materials.particle,
+                    color: color(1, 1, 0, alpha) };
+                this.shapes.particle.draw(caller, this.uniforms, transform, mat);
+            }
         }
 
         // ── Update HUD overlay ────────────────────────────────────────────────

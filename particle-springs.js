@@ -18,6 +18,12 @@ class Particle {
 
     // For Verlet integration
     this.prev_pos = null;
+
+    // Optional lifetime for visual effects (seconds).
+    // If max_life > 0, external code can increment life and
+    // deactivate the particle when life >= max_life.
+    this.life = 0;
+    this.max_life = 0;
   }
 
   update(dt, integration_method) {
