@@ -351,6 +351,61 @@ export class Pacman extends Component
         }
     }
 
+    // ── Ghost eaten explosion at (x, z), tinted by ghost color ───────────────
+    _spawn_ghost_eaten_particles(x, z, ghost_rgb) {
+        if (!this.particle_sim) return;
+
+        const count = 14;
+        const center_y = 0.5;
+        const life_secs = 1.5;
+
+        const particles = [];
+
+        for (let i = 0; i < count; i++) {
+            const p = new Particle();
+            p.mass = 0.4;
+            p.pos = vec3(x, center_y, z);
+
+            // Stronger radial explosion with a bit of upward bias
+            const angle = Math.random() * 2 * Math.PI;
+            const speed_xy = 3.0 + Math.random() * 2.0;
+            const vx = Math.cos(angle) * speed_xy;
+            const vz = Math.sin(angle) * speed_xy;
+            const vy = 4.0 + Math.random() * 1.5;
+            p.vel = vec3(vx, vy, vz);
+
+            p.ext_force = vec3(0, 0, 0);
+            p.prev_pos = null;
+            p.valid = true;
+
+            // Short lifetime for snappy explosion
+            p.life = 0;
+            p.max_life = life_secs;
+
+            // Tint to match ghost body color if provided
+            if (Array.isArray(ghost_rgb) && ghost_rgb.length >= 3) {
+                p.tint = color(ghost_rgb[0], ghost_rgb[1], ghost_rgb[2], 1);
+            }
+
+            this.particle_sim.particles.push(p);
+            particles.push(p);
+        }
+
+        // Loose spring links to give a gooey, cohesive look as they fly apart
+        for (let i = 0; i < count; i++) {
+            const p1 = particles[i];
+            const p2 = particles[(i + 1) % count];
+            const s = new Spring();
+            s.particle_1 = p1;
+            s.particle_2 = p2;
+            s.ks = 20;
+            s.kd = 1.5;
+            s.rest_length = 0.6;
+            s.valid = true;
+            this.particle_sim.springs.push(s);
+        }
+    }
+
     // ── Controls / key bindings ───────────────────────────────────────────────
     render_controls()
     {
@@ -477,6 +532,8 @@ export class Pacman extends Component
                 const dz = this.player.z - ghost.z;
                 if (Math.sqrt(dx * dx + dz * dz) < GHOST_COLLIDE_RADIUS) {
                     if (is_frightened) {
+                        // Ghost eaten: trigger ghost-specific particle burst
+                        this._spawn_ghost_eaten_particles(ghost.x, ghost.z, ghost.color);
                         ghost.respawn();
                         this.score += GHOST_EAT_POINTS;
                     } else {
@@ -557,7 +614,7 @@ export class Pacman extends Component
             this.shapes.ghost.draw(caller, this.uniforms, ghost.get_transform(), mat);
         }
 
-        // ── Draw pellet particle effects ──────────────────────────────────────
+        // ── Draw pellet / ghost particle effects ──────────────────────────────
         if (this.particle_sim) {
             for (const p of this.particle_sim.particles) {
                 if (!p.valid) continue;
@@ -568,10 +625,15 @@ export class Pacman extends Component
                     alpha = Math.max(0, 1 - p.life / p.max_life);
                 }
 
+                // Ghost explosion particles (have tint) are drawn larger than pellet sparks.
+                const base_color = p.tint || color(1, 1, 0, 1);
+                const scale = p.tint ? 0.13 : 0.08;
                 const transform = Mat4.translation(p.pos[0], p.pos[1], p.pos[2])
-                    .times(Mat4.scale(0.09, 0.09, 0.09));
+                    .times(Mat4.scale(scale, scale, scale));
+
+                // If the particle has its own tint, use that; otherwise default to yellow.
                 const mat = { ...this.materials.particle,
-                    color: color(1, 1, 0, alpha) };
+                    color: color(base_color[0], base_color[1], base_color[2], alpha) };
                 this.shapes.particle.draw(caller, this.uniforms, transform, mat);
             }
         }

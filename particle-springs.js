@@ -24,6 +24,10 @@ class Particle {
     // deactivate the particle when life >= max_life.
     this.life = 0;
     this.max_life = 0;
+
+    // Optional per-particle color tint (e.g. for ghost explosions).
+    // If null, the renderer can fall back to a default material color.
+    this.tint = null;
   }
 
   update(dt, integration_method) {
