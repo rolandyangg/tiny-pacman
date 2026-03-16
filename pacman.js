@@ -93,6 +93,9 @@ export class Pacman extends Component
         this.game_over        = false;
         this.last_t           = undefined;
 
+        // Death sequence state
+        this.death_in_progress = false;
+
         this.camera.reset();
         this.autopilot_on = false;
 
@@ -404,6 +407,52 @@ export class Pacman extends Component
         }
     }
 
+    // ── Pacman death disintegration at current player position ───────────────
+    _start_pacman_death_sequence() {
+        if (!this.particle_sim) return;
+        if (this.death_in_progress) return;
+
+        this.death_in_progress = true;
+
+        const x = this.player.x;
+        const z = this.player.z;
+        const center_y = 0.6;
+        const life_secs = 2.5;
+        const count = 40;
+
+        const particles = [];
+
+        for (let i = 0; i < count; i++) {
+            const p = new Particle();
+            p.mass = 0.4;
+            p.pos = vec3(x, center_y, z);
+
+            // Outward spiral-ish velocity with upward bias
+            const angle = Math.random() * 2 * Math.PI;
+            const radius_speed = 2.5 + Math.random() * 2.0;
+            const tangential = 1.0 + Math.random() * 1.0;
+            const vx = Math.cos(angle) * radius_speed - Math.sin(angle) * tangential;
+            const vz = Math.sin(angle) * radius_speed + Math.cos(angle) * tangential;
+            const vy = 4.0 + Math.random() * 1.5;
+            p.vel = vec3(vx, vy, vz);
+
+            p.ext_force = vec3(0, 0, 0);
+            p.prev_pos = null;
+            p.valid = true;
+
+            p.life = 0;
+            p.max_life = life_secs;
+
+            // Yellow like Pacman, slightly larger pieces
+            p.tint = color(1, 1, 0, 1);
+            p.size = 0.12;
+            p.tag  = "pacman_death";
+
+            this.particle_sim.particles.push(p);
+            particles.push(p);
+        }
+    }
+
     // ── Ghost eaten explosion at (x, z), tinted by ghost color ───────────────
     _spawn_ghost_eaten_particles(x, z, ghost_rgb) {
         if (!this.particle_sim) return;
@@ -505,18 +554,21 @@ export class Pacman extends Component
         // ── Game logic (skip when paused or game is over) ─────────────────────
         if (this.uniforms.animate && !this.game_won && !this.game_over)
         {
-            // Compute autopilot decision if it's update time
-            if (this.autopilot_on) {
-                this.autopilot.update(
-                    dt, this.player, this.ghosts,
-                    this.pellets, this.power_pellets,
-                    this.frightened_timer
-                );
-            }
-            // Move player in direction
-            this.player.update(dt);
+            // If Pacman is in a death sequence, freeze all normal game logic
+            // and only step the particle system until the death effect ends.
+            if (!this.death_in_progress) {
+                // Compute autopilot decision if it's update time
+                if (this.autopilot_on) {
+                    this.autopilot.update(
+                        dt, this.player, this.ghosts,
+                        this.pellets, this.power_pellets,
+                        this.frightened_timer
+                    );
+                }
+                // Move player in direction
+                this.player.update(dt);
 
-            // Pellet collection
+                // Pellet collection
             for (const pellet of this.pellets) {
                 if (!pellet.eaten) {
                     const dx = this.player.x - pellet.x;
@@ -533,7 +585,7 @@ export class Pacman extends Component
                 }
             }
 
-            // Power-pellet collection
+                // Power-pellet collection
             for (const pellet of this.power_pellets) {
                 if (!pellet.eaten) {
                     const dx = this.player.x - pellet.x;
@@ -551,76 +603,88 @@ export class Pacman extends Component
                 }
             }
 
-            // Frightened timer (ghosts flee / can be eaten)
-            if (this.frightened_timer > 0) {
-                this.frightened_timer = Math.max(0, this.frightened_timer - dt);
-            }
+                // Frightened timer (ghosts flee / can be eaten)
+                if (this.frightened_timer > 0) {
+                    this.frightened_timer = Math.max(0, this.frightened_timer - dt);
+                }
 
-            // Ghost AI: chase, scatter, or flee
-            const is_frightened = this.frightened_timer > 0;
-            const [pacman_col, pacman_row] = world_to_tile(this.player.x, this.player.z);
-            const blinky = this.ghosts[0];
-            const [blinky_col, blinky_row] = blinky ? world_to_tile(blinky.x, blinky.z) : [pacman_col, pacman_row];
-            let release_ghost_index = 0;
-            for (let i = 1; i <= 3; i++) {
-                if (!this.ghosts[i].released) { release_ghost_index = i; break; }
-            }
-            const ghost_ctx = {
-                dots_eaten: this.dots_eaten,
-                last_dot_time: this.last_dot_time,
-                level: this.level,
-                boredom_force_release: (t - this.last_dot_time) > 4,
-                release_ghost_index,
-                pacman_col,
-                pacman_row,
-                pacman_dir_x: this.player.last_dir_x,
-                pacman_dir_z: this.player.last_dir_z,
-                blinky_col,
-                blinky_row,
-            };
-            for (const ghost of this.ghosts) {
-                ghost.update(dt, this.player.x, this.player.z, is_frightened, t, ghost_ctx);
-            }
+                // Ghost AI: chase, scatter, or flee
+                const is_frightened = this.frightened_timer > 0;
+                const [pacman_col, pacman_row] = world_to_tile(this.player.x, this.player.z);
+                const blinky = this.ghosts[0];
+                const [blinky_col, blinky_row] = blinky ? world_to_tile(blinky.x, blinky.z) : [pacman_col, pacman_row];
+                let release_ghost_index = 0;
+                for (let i = 1; i <= 3; i++) {
+                    if (!this.ghosts[i].released) { release_ghost_index = i; break; }
+                }
+                const ghost_ctx = {
+                    dots_eaten: this.dots_eaten,
+                    last_dot_time: this.last_dot_time,
+                    level: this.level,
+                    boredom_force_release: (t - this.last_dot_time) > 4,
+                    release_ghost_index,
+                    pacman_col,
+                    pacman_row,
+                    pacman_dir_x: this.player.last_dir_x,
+                    pacman_dir_z: this.player.last_dir_z,
+                    blinky_col,
+                    blinky_row,
+                };
+                for (const ghost of this.ghosts) {
+                    ghost.update(dt, this.player.x, this.player.z, is_frightened, t, ghost_ctx);
+                }
 
-            // Ghost–player collision
-            for (const ghost of this.ghosts) {
-                const dx = this.player.x - ghost.x;
-                const dz = this.player.z - ghost.z;
-                if (Math.sqrt(dx * dx + dz * dz) < GHOST_COLLIDE_RADIUS) {
-                    if (is_frightened) {
-                        // Ghost eaten: trigger ghost-specific particle burst
-                        this._spawn_ghost_eaten_particles(ghost.x, ghost.z, ghost.color);
-                        ghost.respawn();
-                        this.score += GHOST_EAT_POINTS;
-                    } else {
-                        this.lives--;
-                        this.player = new PacmanPlayer(START_X, START_Z);
-                        for (const g of this.ghosts) g.respawn();
-                        this.dots_eaten = 0;
-                        this.last_dot_time = t;
-                        if (this.lives <= 0) this.game_over = true;
-                        break;
+                // Ghost–player collision
+                for (const ghost of this.ghosts) {
+                    const dx = this.player.x - ghost.x;
+                    const dz = this.player.z - ghost.z;
+                    if (Math.sqrt(dx * dx + dz * dz) < GHOST_COLLIDE_RADIUS) {
+                        if (is_frightened) {
+                            // Ghost eaten: trigger ghost-specific particle burst
+                            this._spawn_ghost_eaten_particles(ghost.x, ghost.z, ghost.color);
+                            ghost.respawn();
+                            this.score += GHOST_EAT_POINTS;
+                        } else if (!this.death_in_progress) {
+                            // Start Pacman death sequence; game logic will freeze
+                            // until the death particles finish.
+                            this._start_pacman_death_sequence();
+                        }
                     }
                 }
-            }
 
-            // Win condition — all pellets eaten
-            const all_eaten =
-                this.pellets.every(p => p.eaten) &&
-                this.power_pellets.every(p => p.eaten);
-            if (all_eaten) this.game_won = true;
+                // Win condition — all pellets eaten
+                const all_eaten =
+                    this.pellets.every(p => p.eaten) &&
+                    this.power_pellets.every(p => p.eaten);
+                if (all_eaten) this.game_won = true;
+            }
 
             // ── Particle simulation step (shares same dt) ────────────────────
             if (this.particle_sim) {
                 this.particle_sim.update(dt);
 
-                // Update lifetimes and cull expired particles
+                // Update lifetimes and cull expired particles.
+                // Also track whether any Pacman-death particles remain.
+                let any_pacman_death_alive = false;
                 for (const p of this.particle_sim.particles) {
                     if (!p.valid || p.max_life <= 0) continue;
                     p.life += dt;
                     if (p.life >= p.max_life) {
                         p.valid = false;
+                    } else if (p.tag === "pacman_death") {
+                        any_pacman_death_alive = true;
                     }
+                }
+                // If Pacman death sequence is active and all its particles are gone,
+                // now actually apply the life loss and respawn logic.
+                if (this.death_in_progress && !any_pacman_death_alive) {
+                    this.death_in_progress = false;
+                    this.lives--;
+                    this.player = new PacmanPlayer(START_X, START_Z);
+                    for (const g of this.ghosts) g.respawn();
+                    this.dots_eaten = 0;
+                    this.last_dot_time = t;
+                    if (this.lives <= 0) this.game_over = true;
                 }
                 // Optionally prune dead particles to keep arrays small
                 this.particle_sim.particles =
@@ -651,7 +715,7 @@ export class Pacman extends Component
         for (const pellet of this.power_pellets) pellet.draw(caller, this.uniforms, this.pellet_assets);
 
         // ── Draw player ──────────────────────────────
-        if (this.camera.mode !== 'first_person') {
+        if (this.camera.mode !== 'first_person' && !this.death_in_progress) {
             // note - player model hidden in first person
             // or else the whole screen is just yellow lol
             this.shapes.player.draw(

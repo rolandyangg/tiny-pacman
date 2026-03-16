@@ -32,6 +32,10 @@ class Particle {
     // Optional visual size override for this particle when rendering.
     // If null, the renderer chooses a default size based on context.
     this.size = null;
+
+    // Optional tag string for grouping particles by effect type
+    // (e.g., "pacman_death", "ghost_explosion", etc).
+    this.tag = null;
   }
 
   update(dt, integration_method) {
