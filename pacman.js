@@ -18,6 +18,7 @@ const START_Z = 23 - MAZE_ROWS / 2 + 0.5;   // ≈  8.0
 const PELLET_POINTS        = 10;
 const POWER_PELLET_POINTS  = 50;
 const GHOST_EAT_POINTS     = 200;
+const WIN_CONFETTI_SECONDS = 2.0;  // duration of level-complete confetti burst
 const FRIGHTENED_DURATION  = 8;     // seconds after eating power pellet
 const COLLECT_RADIUS       = 0.6;   // world-units; pellet eaten when player center is within this
 const GHOST_COLLIDE_RADIUS = 0.55;  // player + ghost touch (sum of radii ~0.67, slightly generous)
@@ -98,6 +99,11 @@ export class Pacman extends Component
 
         // Death sequence state
         this.death_in_progress = false;
+
+        // Win-sequence / confetti state
+        this.level_complete      = false;
+        this.win_sequence_active = false;
+        this.win_sequence_time   = 0;
 
         this.camera.reset();
         this.autopilot_on = false;
@@ -312,6 +318,66 @@ export class Pacman extends Component
             if (el) el.textContent = this.score ?? 0;
             this._win_el.classList.add('visible');
         }
+    }
+
+    // ── Global level-completion confetti burst ─────────────────────────────────
+    _spawn_win_confetti() {
+        if (!this.particle_sim) return;
+
+        // Dense, high-energy burst across the entire maze
+        const count       = 800;
+        const center_y    = 0.6;
+        const life_secs   = WIN_CONFETTI_SECONDS;
+        const half_cols   = MAZE_COLS / 2;
+        const half_rows   = MAZE_ROWS / 2;
+
+        for (let i = 0; i < count; i++) {
+            const p = new Particle();
+            p.mass = 0.4;
+
+            // Scatter across the whole maze footprint
+            const x = (Math.random() * MAZE_COLS) - half_cols + 0.5;
+            const z = (Math.random() * MAZE_ROWS) - half_rows + 0.5;
+            p.pos   = vec3(x, center_y, z);
+
+            // Upward, slightly outward burst
+            const angle     = Math.random() * 2 * Math.PI;
+            const speed_xy  = 4.0 + Math.random() * 5.0;
+            const vx        = Math.cos(angle) * speed_xy;
+            const vz        = Math.sin(angle) * speed_xy;
+            const vy        = 7.0 + Math.random() * 4.0;
+            p.vel           = vec3(vx, vy, vz);
+
+            p.ext_force = vec3(0, 0, 0);
+            p.prev_pos  = null;
+            p.valid     = true;
+
+            p.life     = 0;
+            p.max_life = life_secs;
+
+            // Fully random bright confetti colours and slightly larger size
+            const r = 0.2 + Math.random() * 0.8;
+            const g = 0.2 + Math.random() * 0.8;
+            const b = 0.2 + Math.random() * 0.8;
+            p.tint   = color(r, g, b, 1);
+            p.size   = 0.15;
+            p.tag    = "win_confetti";
+
+            this.particle_sim.particles.push(p);
+        }
+    }
+
+    _start_win_sequence() {
+        if (this.win_sequence_active || this.game_won || this.game_over) return;
+
+        this.level_complete      = true;
+        this.win_sequence_active = true;
+        this.win_sequence_time   = 0;
+
+        // Ensure animation is running so the sequence can play out
+        this.uniforms.animate = 1;
+
+        this._spawn_win_confetti();
     }
 
     // ── Spawn a short-lived springy yellow particle burst at (x, z) ───────────
@@ -628,6 +694,7 @@ export class Pacman extends Component
 
         this.key_triggered_button("(Un)pause", ["Alt", "a"], () => this.uniforms.animate ^= 1);
         this.key_triggered_button("Reset",     ["Alt", "r"], () => this._reset());
+        // this.key_triggered_button("Test Win + Confetti", ["Alt", "w"], () => this._start_win_sequence());
         this.new_line();
 
         // All remaining key bindings live in pacman-input.js
@@ -665,11 +732,13 @@ export class Pacman extends Component
         });
 
         // ── Game logic (skip when paused or game is over) ─────────────────────
-        if (this.uniforms.animate && !this.game_won && !this.game_over)
+        // Note: we continue running after level completion so the win
+        // confetti sequence can play out before the win overlay appears.
+        if (this.uniforms.animate && !this.game_over)
         {
             // If Pacman is in a death sequence, freeze all normal game logic
             // and only step the particle system until the death effect ends.
-            if (!this.death_in_progress) {
+            if (!this.death_in_progress && !this.win_sequence_active && !this.game_won) {
                 // Compute autopilot decision if it's update time
                 if (this.autopilot_on) {
                     this.autopilot.update(
@@ -774,7 +843,18 @@ export class Pacman extends Component
                 const all_eaten =
                     this.pellets.every(p => p.eaten) &&
                     this.power_pellets.every(p => p.eaten);
-                if (all_eaten) this.game_won = true;
+                if (all_eaten && !this.level_complete) {
+                    this._start_win_sequence();
+                }
+            }
+
+            // ── Win confetti sequence timer ─────────────────────────────────
+            if (this.win_sequence_active) {
+                this.win_sequence_time += dt;
+                if (this.win_sequence_time >= WIN_CONFETTI_SECONDS) {
+                    this.win_sequence_active = false;
+                    this.game_won           = true;
+                }
             }
 
             // ── Particle simulation step (shares same dt) ────────────────────
@@ -894,9 +974,14 @@ export class Pacman extends Component
                 if (!p.valid) continue;
 
                 // If this particle has a lifetime, fade alpha over its duration.
+                // Win confetti fades more slowly so it stays visible for longer.
                 let alpha = 1;
                 if (p.max_life > 0) {
-                    alpha = Math.max(0, 1 - p.life / p.max_life);
+                    let ratio = p.life / p.max_life;
+                    if (p.tag === "win_confetti") {
+                        ratio *= 0.5; // half as fast fade-out
+                    }
+                    alpha = Math.max(0, 1 - ratio);
                 }
 
                 // Base size: power pellets / ghost explosions can override via p.size;
