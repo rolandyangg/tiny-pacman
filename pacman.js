@@ -7,6 +7,7 @@ import {Ghost} from './pacman-ghosts.js';
 import {CameraController} from './camera.js';
 import {register_key_bindings} from './input.js';
 import {PacmanAutopilot} from './pacman-autopilot.js';
+import {ParticleSimulation} from './particle-springs.js';
 
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
 
@@ -59,6 +60,13 @@ export class Pacman extends Component
 
         // ── PacmanAutopilot player ─────────────────────────────────────────────────────────
         this.autopilot = new PacmanAutopilot();
+
+        // ── Particle simulation (shares dt with game loop) ────────────────────
+        this.particle_sim = new ParticleSimulation();
+        this.particle_sim.g_acc = vec3(0, -9.8, 0);
+        this.particle_sim.integration_method = "euler";
+        this.particle_sim.valid = true;   // safe: no particles yet, update() becomes a no-op
+
         this._reset();
     }
 
@@ -426,6 +434,11 @@ export class Pacman extends Component
                 this.pellets.every(p => p.eaten) &&
                 this.power_pellets.every(p => p.eaten);
             if (all_eaten) this.game_won = true;
+
+            // ── Particle simulation step (shares same dt) ────────────────────
+            if (this.particle_sim) {
+                this.particle_sim.update(dt);
+            }
         }
 
         // ── Draw floor ────────────────────────────────────────────────────────
