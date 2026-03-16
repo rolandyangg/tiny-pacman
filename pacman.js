@@ -8,6 +8,7 @@ import {CameraController} from './camera.js';
 import {register_key_bindings} from './input.js';
 import {PacmanAutopilot} from './pacman-autopilot.js';
 import {ParticleSimulation, Particle, Spring} from './particle-springs.js';
+import {SoundManager} from './sound-manager.js';
 
 const { vec3, vec4, color, Mat4, Shape, Material, Shader, Texture, Component } = tiny;
 
@@ -73,6 +74,14 @@ export class Pacman extends Component
         this.particle_sim.g_acc = vec3(0, -9.8, 0);
         this.particle_sim.integration_method = "verlet";
         this.particle_sim.valid = true;   // safe: no particles yet, update() becomes a no-op
+
+        // ── Sounds ────────────────────────────────────────────────────────────
+        // Core gameplay SFX: pellet chomp, ghost eaten, and Pacman death.
+        this.sounds = new SoundManager({
+            pellet:   './sounds/pellet.mp3',
+            ghosteat: './sounds/ghosteat.mp3',
+            death:    './sounds/death.mp3',
+        });
 
         this._reset();
     }
@@ -751,21 +760,26 @@ export class Pacman extends Component
                 this.player.update(dt);
 
                 // Pellet collection
-            for (const pellet of this.pellets) {
-                if (!pellet.eaten) {
-                    const dx = this.player.x - pellet.x;
-                    const dz = this.player.z - pellet.z;
-                    if (Math.sqrt(dx * dx + dz * dz) < COLLECT_RADIUS) {
-                        pellet.eat();
-                        this.score += PELLET_POINTS;
-                        this.dots_eaten++;
-                        this.last_dot_time = t;
+                for (const pellet of this.pellets) {
+                    if (!pellet.eaten) {
+                        const dx = this.player.x - pellet.x;
+                        const dz = this.player.z - pellet.z;
+                        if (Math.sqrt(dx * dx + dz * dz) < COLLECT_RADIUS) {
+                            pellet.eat();
+                            this.score += PELLET_POINTS;
+                            this.dots_eaten++;
+                            this.last_dot_time = t;
 
-                        // Spawn a small spring-connected particle burst at this pellet
-                        this._spawn_pellet_particles(pellet.x, pellet.z);
+                            // Spawn a small spring-connected particle burst at this pellet
+                            this._spawn_pellet_particles(pellet.x, pellet.z);
+
+                            // Play pellet-eaten sound (regular pellets only)
+                            if (this.sounds) {
+                                this.sounds.play('pellet', { volume: 0.4 });
+                            }
+                        }
                     }
                 }
-            }
 
                 // Power-pellet collection
             for (const pellet of this.power_pellets) {
@@ -822,13 +836,19 @@ export class Pacman extends Component
                     const dz = this.player.z - ghost.z;
                     if (Math.sqrt(dx * dx + dz * dz) < GHOST_COLLIDE_RADIUS) {
                         if (is_frightened) {
-                            // Ghost eaten: trigger ghost-specific particle burst
+                            // Ghost eaten: trigger ghost-specific particle burst + sound
                             this._spawn_ghost_eaten_particles(ghost.x, ghost.z, ghost.color);
+                            if (this.sounds) {
+                                this.sounds.play('ghosteat', { volume: 0.7 });
+                            }
                             ghost.respawn();
                             this.score += GHOST_EAT_POINTS;
                         } else if (!this.death_in_progress) {
                             // Start Pacman death sequence; game logic will freeze
                             // until the death particles finish.
+                            if (this.sounds) {
+                                this.sounds.play('death', { volume: 0.8 });
+                            }
                             this._start_pacman_death_sequence();
                         }
                     }
