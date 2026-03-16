@@ -178,7 +178,16 @@ time and interpolation:
 
 ### 3.4 Particle Systems (Visual Effects)
 
-TODO
+The particle system is adapted from Assignment 3 and implemented in `particle-springs.js` with a shared `ParticleSimulation` in the main game loop. The simulation uses **Verlet integration**, gravity (`g_acc`), and a ground plane (y = 0) with penalty-style collision and restitution so particles bounce. Each **Particle** has mass, position, velocity, optional lifetime (`life`/`max_life`), optional color tint and size, and is updated by accumulating external forces (gravity, spring forces) then stepping with the chosen integrator. **Springs** connect pairs of particles with stiffness `ks`, damping `kd`, and rest length; they apply elastic and viscous forces but are **not rendered**—only the particle spheres are drawn.
+
+**Effect types (all spawn particles with velocities in random or structured directions):**
+
+- **Pellet collected:** 5 particles at the pellet position, random outward + upward velocity; connected in a **ring** with springs (ks=30, kd=2, rest_length=0.4). Short lifetime (~2 s), default yellow.
+- **Power pellet collected:** 15 particles, stronger outward + upward burst; again a **ring** of springs (ks=25, kd=2.5, rest_length=0.6). White tint, larger size, ~3 s life.
+- **Ghost eaten:** 14 particles at the ghost position, radial explosion with upward bias; **ring** springs (ks=20, kd=1.5) for a cohesive “gooey” burst. Per-particle tint matches the ghost color (red/pink/cyan/orange), ~1.5 s life.
+- **Ghost frightened aura:** 12 particles arranged in a **ring** around the ghost (radius 0.5), tangential initial velocity; ring springs (ks=40, kd=4, rest length from arc). Blue tint, small size; no max life—they persist and are translated each frame with the ghost until the ghost leaves frightened mode, then they are culled.
+- **Pac-Man death:** 40 particles at the player position, outward spiral-like velocity; **no springs**—free burst. Yellow tint, ~2.5 s life; game waits for these to expire before respawn.
+- **Win confetti:** Large burst (~800 particles) scattered across the maze footprint, random bright colors and upward burst; **no springs**. Used when all pellets are collected.
 
 ---
 
