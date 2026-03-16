@@ -3,7 +3,7 @@ import {get_wall_positions, get_pellet_positions, get_power_pellet_positions,
     MAZE_COLS, MAZE_ROWS, WALL_HEIGHT, FLOOR_MARGIN} from './pacman-map.js';
 import {Pellet, PowerPellet, create_pellet_assets} from './pacman-pellets.js';
 import {PacmanPlayer, world_to_tile} from './pacman-player.js';
-import {Ghost} from './pacman-ghosts.js';
+import {Ghost, GHOST_Y} from './pacman-ghosts.js';
 import {CameraController} from './camera.js';
 import {register_key_bindings} from './input.js';
 import {PacmanAutopilot} from './pacman-autopilot.js';
@@ -28,11 +28,12 @@ export class Pacman extends Component
     {
         // ── Shapes ────────────────────────────────────────────────────────────
         this.shapes = {
-            wall:     new defs.Cube(),
-            floor:    new defs.Cube(),
-            player:   new defs.Subdivision_Sphere(3),
-            ghost:    new defs.Subdivision_Sphere(3),
-            particle: new defs.Subdivision_Sphere(2),
+            wall:         new defs.Cube(),
+            floor:        new defs.Cube(),
+            player:       new defs.Subdivision_Sphere(3),
+            ghost:        new defs.Subdivision_Sphere(3),
+            particle:     new defs.Subdivision_Sphere(2),
+            aura_segment: new defs.Capped_Cylinder(4, 8),
         };
 
         // ── Materials ─────────────────────────────────────────────────────────
@@ -50,6 +51,8 @@ export class Pacman extends Component
                 color: color(0.2, 0.2, 1, 1) },
             particle: { shader: phong, ambient: 0.7, diffusivity: 0.6, specularity: 0.2,
                 color: color(1, 1, 0, 1) },
+            ghost_aura: { shader: phong, ambient: 0.9, diffusivity: 0.3, specularity: 0.2,
+                color: color(0.3, 0.6, 1.0, 0.9) },
         };
 
         // ── Camera ────────────────────────────────────────────────────────────
@@ -98,6 +101,13 @@ export class Pacman extends Component
 
         this.camera.reset();
         this.autopilot_on = false;
+
+        // Initialize ghost aura bookkeeping
+        for (const ghost of this.ghosts) {
+            ghost._aura_particles = null;
+            ghost._last_x = ghost.x;
+            ghost._last_z = ghost.z;
+        }
 
         // Clear any existing particle effects
         if (this.particle_sim) {
@@ -453,6 +463,109 @@ export class Pacman extends Component
         }
     }
 
+    // ── Ghost frightened aura helpers ────────────────────────────────────────
+    _spawn_ghost_aura(ghost) {
+        if (!this.particle_sim) return;
+        if (ghost._aura_particles) return;
+
+        const count = 12;
+        const radius = 0.5;
+        const height_offset = 0.3;
+
+        const aura_particles = [];
+
+        for (let i = 0; i < count; i++) {
+            const angle = (2 * Math.PI * i) / count;
+            const px = ghost.x + radius * Math.cos(angle);
+            const pz = ghost.z + radius * Math.sin(angle);
+            const py = GHOST_Y + height_offset;
+
+            const p = new Particle();
+            p.mass = 0.3;
+            p.pos = vec3(px, py, pz);
+
+            // Small initial tangential velocity to give the ring some motion.
+            const tangential_speed = 1.0;
+            const vx = -Math.sin(angle) * tangential_speed;
+            const vz =  Math.cos(angle) * tangential_speed;
+            p.vel = vec3(vx, 0, vz);
+
+            p.ext_force = vec3(0, 0, 0);
+            p.prev_pos = null;
+            p.valid = true;
+
+            p.life = 0;
+            p.max_life = 0; // persistent while frightened
+
+            p.tint = color(0.3, 0.6, 1.0, 1.0);
+            p.size = 0.06;
+            p.tag  = "ghost_aura";
+
+            this.particle_sim.particles.push(p);
+            aura_particles.push(p);
+        }
+
+        // Connect into a ring with springs for a smooth elastic band.
+        for (let i = 0; i < count; i++) {
+            const p1 = aura_particles[i];
+            const p2 = aura_particles[(i + 1) % count];
+            const s = new Spring();
+            s.particle_1 = p1;
+            s.particle_2 = p2;
+            s.ks = 40;
+            s.kd = 4;
+            s.rest_length = 2 * Math.PI * radius / count;
+            s.valid = true;
+            this.particle_sim.springs.push(s);
+        }
+
+        ghost._aura_particles = aura_particles;
+    }
+
+    _clear_ghost_aura(ghost) {
+        if (!ghost._aura_particles) return;
+        for (const p of ghost._aura_particles) {
+            p.valid = false;
+        }
+        ghost._aura_particles = null;
+    }
+
+    _update_ghost_aura_for_frame(ghost, is_frightened) {
+        const had_aura = !!ghost._aura_particles;
+
+        // Translate existing aura with ghost's movement and lock its height.
+        if (ghost._aura_particles) {
+            const dx = ghost.x - ghost._last_x;
+            const dz = ghost.z - ghost._last_z;
+            const offset = vec3(dx, 0, dz);
+            const target_y = GHOST_Y + 0.6;
+
+            for (const p of ghost._aura_particles) {
+                if (!p.valid) continue;
+                p.pos = p.pos.plus(offset);
+                if (p.prev_pos) {
+                    p.prev_pos = p.prev_pos.plus(offset);
+                }
+                // Lock vertical position around the ghost so the ring floats.
+                p.pos = vec3(p.pos[0], target_y, p.pos[2]);
+                if (p.prev_pos) {
+                    p.prev_pos = vec3(p.prev_pos[0], target_y, p.prev_pos[2]);
+                }
+            }
+        }
+
+        if (is_frightened) {
+            if (!had_aura) {
+                this._spawn_ghost_aura(ghost);
+            }
+        } else if (had_aura) {
+            this._clear_ghost_aura(ghost);
+        }
+
+        ghost._last_x = ghost.x;
+        ghost._last_z = ghost.z;
+    }
+
     // ── Ghost eaten explosion at (x, z), tinted by ghost color ───────────────
     _spawn_ghost_eaten_particles(x, z, ghost_rgb) {
         if (!this.particle_sim) return;
@@ -652,6 +765,11 @@ export class Pacman extends Component
                     }
                 }
 
+                // Update / manage ghost auras around frightened ghosts
+                for (const ghost of this.ghosts) {
+                    this._update_ghost_aura_for_frame(ghost, is_frightened);
+                }
+
                 // Win condition — all pellets eaten
                 const all_eaten =
                     this.pellets.every(p => p.eaten) &&
@@ -732,6 +850,42 @@ export class Pacman extends Component
                 ? this.materials.ghost_frightened
                 : { ...this.materials.ghost, color: color(...ghost.color) };
             this.shapes.ghost.draw(caller, this.uniforms, ghost.get_transform(), mat);
+
+            // Draw aura ring around frightened ghosts
+            if (is_frightened && ghost._aura_particles && ghost._aura_particles.length > 1) {
+                const aura = ghost._aura_particles;
+                const seg_mat = this.materials.ghost_aura;
+                const count = aura.length;
+                for (let i = 0; i < count; i++) {
+                    const p1 = aura[i];
+                    const p2 = aura[(i + 1) % count];
+                    if (!p1.valid || !p2.valid) continue;
+
+                    const v1 = p1.pos;
+                    const v2 = p2.pos;
+                    const mid = v1.plus(v2).times(0.5);
+                    const dir = v2.minus(v1);
+                    const len = dir.norm();
+                    if (len < 1e-4) continue;
+
+                    // Build transform for a thin cylinder segment between p1 and p2
+                    let model = Mat4.translation(mid[0], mid[1], mid[2]);
+
+                    // Default cylinder points along +y; align to dir.
+                    const up = vec3(0, 1, 0);
+                    const d = dir.normalized();
+                    let axis = up.cross(d);
+                    const axis_norm = axis.norm();
+                    if (axis_norm > 1e-4) {
+                        axis = axis.times(1 / axis_norm);
+                        const angle = Math.acos(up.dot(d));
+                        model = model.times(Mat4.rotation(angle, axis[0], axis[1], axis[2]));
+                    }
+
+                    model = model.times(Mat4.scale(0.03, len / 2, 0.03));
+                    this.shapes.aura_segment.draw(caller, this.uniforms, model, seg_mat);
+                }
+            }
         }
 
         // ── Draw pellet / power / ghost particle effects ──────────────────────
